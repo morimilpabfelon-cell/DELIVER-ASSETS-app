@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory = $true)]
-    [string]$SourcePath
+    [string]$SourcePath,
+
+    [string]$Version = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,36 +20,56 @@ Assert-Command "robocopy"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $TargetPath = Join-Path $RepoRoot "services\coordination-hub"
 
-if (-not (Test-Path $SourcePath)) {
+if (-not (Test-Path -LiteralPath $SourcePath -PathType Container)) {
     throw "No existe la carpeta del Coordination Hub: $SourcePath"
 }
 
+$SourcePath = (Resolve-Path -LiteralPath $SourcePath).Path
+
+$RequiredFiles = @(
+    "server.mjs",
+    "core.mjs",
+    "README.md"
+)
+
+foreach ($RequiredFile in $RequiredFiles) {
+    if (-not (Test-Path -LiteralPath (Join-Path $SourcePath $RequiredFile) -PathType Leaf)) {
+        throw "La carpeta no parece ser el Coordination Hub completo. Falta: $RequiredFile"
+    }
+}
+
 $PackagePath = Join-Path $SourcePath "package.json"
-if (-not (Test-Path $PackagePath)) {
-    throw "La carpeta indicada no contiene package.json. Usa la raíz real del Coordination Hub."
+if (Test-Path -LiteralPath $PackagePath -PathType Leaf) {
+    $Package = Get-Content -LiteralPath $PackagePath -Raw | ConvertFrom-Json
+    $PackageName = [string]$Package.name
+
+    if ($PackageName -in @(
+        "deliver-assets-customer",
+        "deliver-assets-business",
+        "deliver-assets-rider",
+        "deliver-assets-control"
+    )) {
+        throw "La carpeta indicada corresponde a una aplicación, no al Coordination Hub: $PackageName"
+    }
 }
 
-$Package = Get-Content $PackagePath -Raw | ConvertFrom-Json
-$PackageName = [string]$Package.name
-$PackageVersion = [string]$Package.version
-
-if ($PackageName -in @(
-    "deliver-assets-customer",
-    "deliver-assets-business",
-    "deliver-assets-rider",
-    "deliver-assets-control"
-)) {
-    throw "La carpeta indicada corresponde a una aplicación, no al Coordination Hub: $PackageName"
+$HubVersion = $Version.Trim()
+if ([string]::IsNullOrWhiteSpace($HubVersion)) {
+    $FolderName = Split-Path -Leaf $SourcePath
+    if ($FolderName -match '(?i)v(?<HubVersion>\d+(?:\.\d+){1,2})') {
+        $HubVersion = $Matches.HubVersion
+    }
+    else {
+        throw "No se pudo determinar la versión desde la carpeta '$FolderName'. Ejecuta el script con -Version, por ejemplo -Version '2.3.0'."
+    }
 }
 
-$HasServer =
-    (Test-Path (Join-Path $SourcePath "server.mjs")) -or
-    (Test-Path (Join-Path $SourcePath "core.mjs")) -or
-    (Test-Path (Join-Path $SourcePath "src")) -or
-    (Test-Path (Join-Path $SourcePath "server"))
+if ($HubVersion -match '^\d+\.\d+$') {
+    $HubVersion = "$HubVersion.0"
+}
 
-if (-not $HasServer) {
-    throw "No se encontró server.mjs, core.mjs, src o server. La carpeta no parece ser el Hub completo."
+if ($HubVersion -notmatch '^\d+\.\d+\.\d+$') {
+    throw "La versión '$HubVersion' no es válida. Usa el formato 2.3.0."
 }
 
 Push-Location $RepoRoot
@@ -67,16 +89,15 @@ try {
         throw "No se pudo actualizar la rama main."
     }
 
-    if (Test-Path $TargetPath) {
-        Remove-Item -Recurse -Force $TargetPath
+    if (Test-Path -LiteralPath $TargetPath) {
+        Remove-Item -Recurse -Force -LiteralPath $TargetPath
     }
-    New-Item -ItemType Directory -Force $TargetPath | Out-Null
+    New-Item -ItemType Directory -Force -Path $TargetPath | Out-Null
 
     $ExcludedDirectories = @(
         "node_modules",
         ".git",
         ".runtime",
-        "data",
         "uploads",
         "coverage",
         "dist",
@@ -87,6 +108,7 @@ try {
 
     $ExcludedFiles = @(
         ".env",
+        ".env.*",
         "hub-state.json",
         "hub-state.json.tmp",
         "*.log",
@@ -115,6 +137,15 @@ try {
         throw "Robocopy falló con código $RoboCode."
     }
 
+    $Manifest = [ordered]@{
+        name = "deliver-assets-coordination-hub"
+        version = $HubVersion
+        runtime = "node"
+        entry = "server.mjs"
+        schemaVersion = 2
+    }
+    $Manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $TargetPath "hub-manifest.json") -Encoding utf8
+
     git add --all -- "services/coordination-hub"
     if ($LASTEXITCODE -ne 0) {
         throw "No se pudieron preparar los archivos del Coordination Hub."
@@ -126,7 +157,7 @@ try {
         exit 0
     }
 
-    git commit -m "feat(hub): publish Coordination Hub v$PackageVersion"
+    git commit -m "feat(hub): publish Coordination Hub v$HubVersion"
     if ($LASTEXITCODE -ne 0) {
         throw "No se pudo crear el commit."
     }
@@ -138,8 +169,9 @@ try {
 
     $Commit = git rev-parse HEAD
     Write-Host "Coordination Hub publicado correctamente."
-    Write-Host "Paquete: $PackageName"
-    Write-Host "Versión: $PackageVersion"
+    Write-Host "Servicio: deliver-assets-coordination-hub"
+    Write-Host "Versión: $HubVersion"
+    Write-Host "Destino: services/coordination-hub"
     Write-Host "Commit: $Commit"
 }
 finally {
