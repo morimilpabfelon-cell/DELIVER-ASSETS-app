@@ -1,7 +1,8 @@
 import { createContext, PropsWithChildren, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { AccessibilityInfo, AppState as NativeAppState } from 'react-native'
-import type { Product, Store } from '@/data/catalog'
+import type { Product, ProductStatus, ProductVariant, Store } from '@/data/catalog'
 import { stores } from '@/data/catalog'
+import { businessVisibleProducts, createSharedMerchantStates, customerVisibleProducts, nextCatalogProductId, normalizeSharedMerchantStates, type SharedBusinessProfile, type SharedCatalogProduct, type SharedMerchantState } from '@/data/merchantCatalog'
 import {
   AppNotice,
   AppRole,
@@ -44,6 +45,14 @@ import {
   ShipmentDetails,
 } from '@/data/operations'
 import {
+  appendCoordinationMessage,
+  createCoordinationMessage,
+  ensureOperationCoordination,
+  escalateCoordination,
+  normalizeOperationCoordination,
+  type OperationCoordination,
+} from '@/data/coordination'
+import {
   createActionKey,
   createQueuedAction,
   createTechnicalEvent,
@@ -57,7 +66,7 @@ import {
 } from '@/data/resilience'
 import { backendConfig, HubDomainRevisions, pullHubState, SharedHubState, syncSnapshot } from '@/services/backend'
 import { clearAppSnapshot, loadAppSnapshot, PersistedAppSnapshot, saveAppSnapshot } from '@/services/persistence'
-import { BusinessLocalProfile, createBusinessProfiles } from '@/data/businessProfile'
+import { BusinessLocalProfile, createBusinessProfiles, emptyBusinessProductMedia } from '@/data/businessProfile'
 import { businessMediaExists, clearAllBusinessMedia } from '@/services/businessMedia'
 
 export type CartLine = { storeId: number; product: Product; quantity: number; note: string; extras: string[] }
@@ -86,39 +95,17 @@ export type UserSettings = { orderUpdates: boolean; promotions: boolean; securit
 export type UserProfile = { name: string; email: string; phone: string }
 export type PersistenceStatus = 'loading' | 'ready' | 'saving' | 'error'
 export type SyncStatus = 'local' | 'pending' | 'synced' | 'error'
-export type ActionResult = { ok: boolean; message: string; operationId?: string }
-export type MerchantStoreState = { storeId: number; open: boolean; autoAccept: boolean; stock: Record<number, boolean>; productImages: Record<number, string | null> }
+export type ActionResult = { ok: boolean; message: string; operationId?: string; productId?: number }
+export type MerchantProductInput = { name: string; description: string; price: number; symbol: string; group: string; brand?: string; unit?: string; presentation?: string; tags?: string[]; attributes?: Record<string, string>; variants?: ProductVariant[]; status?: ProductStatus; popular?: boolean }
+export type MerchantStoreState = SharedMerchantState
 
 const defaultSettings: UserSettings = { orderUpdates: true, promotions: true, securityAlerts: true, locationWhileUsing: true, biometric: false, darkMode: false }
 const defaultProfile: UserProfile = { name: 'Eidon Morimil', email: 'eidon@deliverassets.demo', phone: '+51 999 432 101' }
 const customerId = 'customer-demo'
 const riderId = 'rider-demo'
 
-const createMerchantStates = (): Record<number, MerchantStoreState> => Object.fromEntries(stores.map((store) => [store.id, {
-  storeId: store.id,
-  open: true,
-  autoAccept: false,
-  stock: Object.fromEntries(store.products.map((product) => [product.id, true])),
-  productImages: Object.fromEntries(store.products.map((product) => [product.id, null])),
-}]))
-
-
-function normalizeMerchantStates(value?: Record<number, Partial<MerchantStoreState>> | null): Record<number, MerchantStoreState> {
-  const defaults = createMerchantStates()
-  if (!value || typeof value !== 'object') return defaults
-  for (const store of stores) {
-    const saved = value[store.id]
-    if (!saved) continue
-    defaults[store.id] = {
-      ...defaults[store.id],
-      ...saved,
-      storeId: store.id,
-      stock: { ...defaults[store.id].stock, ...(saved.stock ?? {}) },
-      productImages: { ...defaults[store.id].productImages, ...(saved.productImages ?? {}) },
-    }
-  }
-  return defaults
-}
+const createMerchantStates = createSharedMerchantStates
+const normalizeMerchantStates = normalizeSharedMerchantStates
 
 function storeProfile(storeId: number): OperatorProfile {
   const store = stores.find((item) => item.id === storeId) ?? stores[0]
@@ -231,6 +218,10 @@ export type AppState = {
   activeOrder: ActiveOrder | null
   activeOperation: IntegratedOperation | null
   operations: IntegratedOperation[]
+  getOperationCoordination: (id: string) => OperationCoordination | null
+  sendOperationText: (id: string, text: string) => ActionResult
+  sendOperationImage: (id: string, imageUrl: string) => ActionResult
+  escalateOperationChat: (id: string) => ActionResult
   ledger: LedgerEntry[]
   operationStatusText: string
   financeSummary: { grossVolume: number; merchantCredits: number; riderCredits: number; platformRevenue: number; customerCharges: number; refunds: number }
@@ -257,8 +248,16 @@ export type AppState = {
   addMerchantDemoOrder: () => void
   merchantStock: Record<number, boolean>
   merchantProductImages: Record<number, string | null>
+  currentMerchantProducts: SharedCatalogProduct[]
+  currentMerchantPublicProfile: SharedBusinessProfile
   setMerchantProductAvailability: (productId: number, available: boolean) => ActionResult
   setMerchantProductImageUrl: (productId: number, url: string | null) => ActionResult
+  setMerchantBusinessMediaUrl: (kind: 'logo' | 'cover', url: string | null) => ActionResult
+  updateMerchantPublicProfile: (patch: Partial<Omit<SharedBusinessProfile, 'storeId'>>) => ActionResult
+  createMerchantProduct: (input: MerchantProductInput) => ActionResult
+  updateMerchantProduct: (productId: number, patch: Partial<MerchantProductInput>) => ActionResult
+  setMerchantProductStatus: (productId: number, status: ProductStatus) => ActionResult
+  archiveMerchantProduct: (productId: number) => ActionResult
 
   riderOnline: boolean
   setRiderOnline: (value: boolean) => void
@@ -370,6 +369,8 @@ export function AppProvider({ children }: PropsWithChildren) {
   const merchantAutoAccept = currentMerchantState.autoAccept
   const merchantStock = currentMerchantState.stock
   const merchantProductImages = currentMerchantState.productImages
+  const currentMerchantProducts = useMemo(() => businessVisibleProducts(currentMerchantState, true), [currentMerchantState])
+  const currentMerchantPublicProfile = currentMerchantState.publicProfile
 
   const ledger = useMemo(() => deriveLedger(operations), [operations])
   const history = useMemo(() => deriveCustomerHistory(operations), [operations])
@@ -442,7 +443,7 @@ export function AppProvider({ children }: PropsWithChildren) {
   }, [logTechnicalEvent, networkMode])
 
   const snapshot = useMemo<PersistedAppSnapshot>(() => ({
-    schemaVersion: 8,
+    schemaVersion: 10,
     updatedAt: new Date().toISOString(),
     onboardingComplete,
     role,
@@ -943,7 +944,11 @@ export function AppProvider({ children }: PropsWithChildren) {
   const toggleSetting = (key: keyof UserSettings) => setSettings((current) => ({ ...current, [key]: !current[key] }))
   const closeDesktopSession = () => setDesktopSessionActive(false)
   const isStoreOpen = (storeId: number) => merchantStates[storeId]?.open !== false
-  const isProductAvailable = (storeId: number, productId: number) => isStoreOpen(storeId) && merchantStates[storeId]?.stock[productId] !== false
+  const isProductAvailable = (storeId: number, productId: number) => {
+    const state = merchantStates[storeId]
+    const product = state?.catalog?.[productId]
+    return isStoreOpen(storeId) && Boolean(product) && product.status === 'published' && state.stock[productId] !== false
+  }
 
   const addToCart = (store: Store, product: Product, quantity: number, note: string, extras: string[]): ActionResult => {
     if (adminMaintenance) return { ok: false, message: 'La plataforma está en mantenimiento. No se aceptan nuevos pedidos.' }
@@ -1120,33 +1125,211 @@ export function AppProvider({ children }: PropsWithChildren) {
   }
   const setMerchantOpen = (value: boolean) => updateMerchantState({ open: value })
   const setMerchantAutoAccept = (value: boolean) => updateMerchantState({ autoAccept: value })
-  const setMerchantProductAvailability = (productId: number, available: boolean): ActionResult => {
+
+  const updateMerchantPublicProfile = (patch: Partial<Omit<SharedBusinessProfile, 'storeId'>>): ActionResult => {
     const store = stores.find((item) => item.id === currentMerchantStoreId)
-    const product = store?.products.find((item) => item.id === productId)
-    if (!store || !product) return { ok: false, message: 'El producto no pertenece al comercio activo.' }
-    merchantDomainDirtyRef.current = true
-    const current = merchantStatesRef.current
-    const base = current[currentMerchantStoreId] ?? createMerchantStates()[currentMerchantStoreId]
-    const nextStore = { ...base, stock: { ...base.stock, [productId]: available } }
-    const next = { ...current, [currentMerchantStoreId]: nextStore }
-    merchantStatesRef.current = next
-    setMerchantStates(next)
-    queueAction('merchant_settings', String(currentMerchantStoreId), available ? 'Producto activado' : 'Producto agotado', { productId, available })
+    if (!store) return { ok: false, message: 'El comercio activo no existe.' }
+    const base = merchantStatesRef.current[currentMerchantStoreId] ?? createMerchantStates()[currentMerchantStoreId]
+    const nextProfile: SharedBusinessProfile = {
+      ...base.publicProfile,
+      ...patch,
+      storeId: currentMerchantStoreId,
+      businessType: patch.businessType ?? base.publicProfile.businessType,
+      updatedAt: new Date().toISOString(),
+    }
+    updateMerchantState({ publicProfile: nextProfile })
+    return { ok: true, message: 'La información pública quedó lista para Customer.' }
+  }
+
+  const setMerchantBusinessMediaUrl = (kind: 'logo' | 'cover', url: string | null): ActionResult => {
+    const patch = kind === 'logo' ? { logoUrl: url } : { coverUrl: url }
+    const result = updateMerchantPublicProfile(patch)
+    if (result.ok) queueAction('merchant_settings', String(currentMerchantStoreId), url ? `${kind === 'logo' ? 'Logo' : 'Portada'} publicada` : `${kind === 'logo' ? 'Logo' : 'Portada'} retirada`, { kind, url })
+    return result
+  }
+
+  const setMerchantProductAvailability = (productId: number, available: boolean): ActionResult => {
+    const base = merchantStatesRef.current[currentMerchantStoreId] ?? createMerchantStates()[currentMerchantStoreId]
+    const product = base.catalog[productId]
+    if (!product) return { ok: false, message: 'El producto no pertenece al comercio activo.' }
+    if (product.status === 'archived') return { ok: false, message: 'Restaura el producto archivado antes de activarlo.' }
+    const status: ProductStatus = available ? 'published' : 'out_of_stock'
+    const updated = { ...product, status, updatedAt: new Date().toISOString(), archivedAt: null }
+    updateMerchantState({
+      stock: { ...base.stock, [productId]: available },
+      catalog: { ...base.catalog, [productId]: updated },
+    })
+    queueAction('merchant_settings', String(currentMerchantStoreId), available ? 'Producto activado' : 'Producto agotado', { productId, available, status })
     return { ok: true, message: available ? `${product.name} volvió a estar disponible.` : `${product.name} quedó marcado como agotado.` }
   }
+
   const setMerchantProductImageUrl = (productId: number, url: string | null): ActionResult => {
-    const store = stores.find((item) => item.id === currentMerchantStoreId)
-    const product = store?.products.find((item) => item.id === productId)
-    if (!store || !product) return { ok: false, message: 'El producto no pertenece al comercio activo.' }
-    merchantDomainDirtyRef.current = true
-    const current = merchantStatesRef.current
-    const base = current[currentMerchantStoreId] ?? createMerchantStates()[currentMerchantStoreId]
-    const nextStore = { ...base, productImages: { ...(base.productImages ?? {}), [productId]: url } }
-    const next = { ...current, [currentMerchantStoreId]: nextStore }
-    merchantStatesRef.current = next
-    setMerchantStates(next)
+    const base = merchantStatesRef.current[currentMerchantStoreId] ?? createMerchantStates()[currentMerchantStoreId]
+    const product = base.catalog[productId]
+    if (!product) return { ok: false, message: 'El producto no pertenece al comercio activo.' }
+    updateMerchantState({ productImages: { ...base.productImages, [productId]: url } })
     queueAction('merchant_settings', String(currentMerchantStoreId), url ? 'Foto de producto publicada' : 'Foto pública de producto retirada', { productId, url })
     return { ok: true, message: url ? `${product.name} ya tiene una imagen pública.` : `La imagen pública de ${product.name} fue retirada.` }
+  }
+
+  const createMerchantProduct = (input: MerchantProductInput): ActionResult => {
+    const name = input.name.trim()
+    const description = input.description.trim()
+    const group = input.group.trim()
+    const price = Number(input.price)
+    if (name.length < 2) return { ok: false, message: 'Escribe un nombre válido.' }
+    if (description.length < 8) return { ok: false, message: 'La descripción debe tener al menos ocho caracteres.' }
+    if (!Number.isFinite(price) || price <= 0) return { ok: false, message: 'El precio debe ser mayor que cero.' }
+    if (!group) return { ok: false, message: 'Selecciona una sección del catálogo.' }
+    const base = merchantStatesRef.current[currentMerchantStoreId] ?? createMerchantStates()[currentMerchantStoreId]
+    const productId = nextCatalogProductId(currentMerchantStoreId, base.catalog)
+    const now = new Date().toISOString()
+    const status = input.status ?? 'draft'
+    const product: SharedCatalogProduct = {
+      id: productId,
+      name,
+      description,
+      price: Number(price.toFixed(2)),
+      symbol: input.symbol.trim().slice(0, 5).toUpperCase() || name.slice(0, 2).toUpperCase(),
+      group,
+      brand: input.brand?.trim() || undefined,
+      unit: input.unit?.trim() || undefined,
+      presentation: input.presentation?.trim() || undefined,
+      tags: input.tags?.map((item) => item.trim()).filter(Boolean).slice(0, 16),
+      attributes: input.attributes,
+      variants: input.variants,
+      popular: input.popular === true,
+      status,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+    }
+    updateMerchantState({
+      catalog: { ...base.catalog, [productId]: product },
+      stock: { ...base.stock, [productId]: status === 'published' },
+      productImages: { ...base.productImages, [productId]: null },
+    })
+    setBusinessProfiles((current) => {
+      const profile = current[currentMerchantStoreId] ?? createBusinessProfiles()[currentMerchantStoreId]
+      return { ...current, [currentMerchantStoreId]: { ...profile, productMedia: { ...profile.productMedia, [productId]: emptyBusinessProductMedia(productId) }, updatedAt: now } }
+    })
+    queueAction('merchant_settings', String(currentMerchantStoreId), 'Producto creado', { productId, status })
+    return { ok: true, message: status === 'published' ? `${name} ya está publicado.` : `${name} quedó guardado como borrador.`, productId }
+  }
+
+  const updateMerchantProduct = (productId: number, patch: Partial<MerchantProductInput>): ActionResult => {
+    const base = merchantStatesRef.current[currentMerchantStoreId] ?? createMerchantStates()[currentMerchantStoreId]
+    const currentProduct = base.catalog[productId]
+    if (!currentProduct) return { ok: false, message: 'El producto no pertenece al comercio activo.' }
+    const name = patch.name === undefined ? currentProduct.name : patch.name.trim()
+    const description = patch.description === undefined ? currentProduct.description : patch.description.trim()
+    const price = patch.price === undefined ? currentProduct.price : Number(patch.price)
+    if (name.length < 2 || description.length < 8 || !Number.isFinite(price) || price <= 0) return { ok: false, message: 'Revisa nombre, descripción y precio.' }
+    const nextStatus = patch.status ?? currentProduct.status
+    const updated: SharedCatalogProduct = {
+      ...currentProduct,
+      ...patch,
+      id: productId,
+      name,
+      description,
+      price: Number(price.toFixed(2)),
+      symbol: patch.symbol === undefined ? currentProduct.symbol : patch.symbol.trim().slice(0, 5).toUpperCase() || currentProduct.symbol,
+      group: patch.group === undefined ? currentProduct.group : patch.group.trim() || currentProduct.group,
+      brand: patch.brand === undefined ? currentProduct.brand : patch.brand.trim() || undefined,
+      unit: patch.unit === undefined ? currentProduct.unit : patch.unit.trim() || undefined,
+      presentation: patch.presentation === undefined ? currentProduct.presentation : patch.presentation.trim() || undefined,
+      status: nextStatus,
+      updatedAt: new Date().toISOString(),
+      archivedAt: nextStatus === 'archived' ? new Date().toISOString() : null,
+    }
+    updateMerchantState({
+      catalog: { ...base.catalog, [productId]: updated },
+      stock: { ...base.stock, [productId]: nextStatus === 'published' ? base.stock[productId] !== false : false },
+    })
+    queueAction('merchant_settings', String(currentMerchantStoreId), 'Producto editado', { productId, status: nextStatus })
+    return { ok: true, message: `${updated.name} quedó actualizado.`, productId }
+  }
+
+  const setMerchantProductStatus = (productId: number, status: ProductStatus): ActionResult => {
+    const base = merchantStatesRef.current[currentMerchantStoreId] ?? createMerchantStates()[currentMerchantStoreId]
+    const product = base.catalog[productId]
+    if (!product) return { ok: false, message: 'Producto no encontrado.' }
+    const updated: SharedCatalogProduct = { ...product, status, updatedAt: new Date().toISOString(), archivedAt: status === 'archived' ? new Date().toISOString() : null }
+    updateMerchantState({ catalog: { ...base.catalog, [productId]: updated }, stock: { ...base.stock, [productId]: status === 'published' } })
+    queueAction('merchant_settings', String(currentMerchantStoreId), `Producto ${status}`, { productId, status })
+    return { ok: true, message: status === 'published' ? `${product.name} quedó publicado.` : status === 'archived' ? `${product.name} fue archivado sin borrar su historial.` : `${product.name} cambió a ${status}.` }
+  }
+
+  const archiveMerchantProduct = (productId: number): ActionResult => setMerchantProductStatus(productId, 'archived')
+
+
+  const getOperationCoordination = (id: string): OperationCoordination | null => {
+    const operation = operations.find((item) => item.id === id && (item.storeId ?? item.providerId) === currentMerchantStoreId)
+    return operation ? normalizeOperationCoordination(operation) : null
+  }
+
+  const sendOperationText = (id: string, value: string): ActionResult => {
+    const textValue = value.trim()
+    if (!textValue) return { ok: false, message: 'Escribe un mensaje antes de enviarlo.' }
+    if (textValue.length > 1200) return { ok: false, message: 'El mensaje supera 1200 caracteres.' }
+    const operation = operations.find((item) => item.id === id && (item.storeId ?? item.providerId) === currentMerchantStoreId)
+    if (!operation) return { ok: false, message: 'Pedido no encontrado o no pertenece a este comercio.' }
+    const coordination = normalizeOperationCoordination(operation)
+    if (coordination.status === 'closed') return { ok: false, message: 'La conversación terminó y permanece en modo historial.' }
+    const message = createCoordinationMessage(
+      operation.id,
+      'merchant',
+      `merchant-${currentMerchantStoreId}`,
+      currentMerchantPublicProfile.name,
+      'text',
+      { text: textValue },
+    )
+    setOperations((current) => current.map((item) => item.id === id ? {
+      ...item,
+      updatedAt: message.createdAt,
+      coordination: appendCoordinationMessage(item, message),
+    } : item))
+    queueAction('chat_message', id, 'Mensaje enviado en el pedido', { messageId: message.id, type: 'text' })
+    return { ok: true, message: networkMode === 'offline' ? 'Mensaje guardado; se enviará al recuperar conexión.' : 'Mensaje enviado.' }
+  }
+
+  const sendOperationImage = (id: string, imageUrl: string): ActionResult => {
+    if (!imageUrl.trim()) return { ok: false, message: 'La fotografía no tiene una URL válida.' }
+    const operation = operations.find((item) => item.id === id && (item.storeId ?? item.providerId) === currentMerchantStoreId)
+    if (!operation) return { ok: false, message: 'Pedido no encontrado o no pertenece a este comercio.' }
+    const coordination = normalizeOperationCoordination(operation)
+    if (coordination.status === 'closed') return { ok: false, message: 'La conversación terminó y permanece en modo historial.' }
+    const message = createCoordinationMessage(
+      operation.id,
+      'merchant',
+      `merchant-${currentMerchantStoreId}`,
+      currentMerchantPublicProfile.name,
+      'image',
+      { text: 'Fotografía adjunta', imageUrl },
+    )
+    setOperations((current) => current.map((item) => item.id === id ? {
+      ...item,
+      updatedAt: message.createdAt,
+      coordination: appendCoordinationMessage(item, message),
+    } : item))
+    queueAction('chat_message', id, 'Fotografía enviada en el pedido', { messageId: message.id, type: 'image' })
+    return { ok: true, message: 'Fotografía enviada.' }
+  }
+
+  const escalateOperationChat = (id: string): ActionResult => {
+    const operation = operations.find((item) => item.id === id && (item.storeId ?? item.providerId) === currentMerchantStoreId)
+    if (!operation) return { ok: false, message: 'Pedido no encontrado o no pertenece a este comercio.' }
+    const coordination = normalizeOperationCoordination(operation)
+    if (coordination.status === 'closed') return { ok: false, message: 'La conversación ya está cerrada.' }
+    if (coordination.escalated) return { ok: true, message: 'Control ya fue solicitado para esta conversación.' }
+    const updated = escalateCoordination(operation, currentMerchantPublicProfile.name)
+    setOperations((current) => current.map((item) => item.id === id ? {
+      ...item,
+      updatedAt: updated.escalatedAt ?? item.updatedAt,
+      coordination: updated,
+    } : item))
+    queueAction('chat_escalation', id, 'Conversación escalada a Control', { actor: 'merchant' })
+    return { ok: true, message: 'Control fue solicitado. La conversación quedó marcada para revisión.' }
   }
 
   const moveMerchantOrder = (id: string, requestedState: MerchantOrderState) => {
@@ -1165,7 +1348,8 @@ export function AppProvider({ children }: PropsWithChildren) {
   const addMerchantDemoOrder = () => {
     const store = stores.find((item) => item.id === currentMerchantStoreId) ?? stores[0]
     if (!isStoreOpen(store.id)) return
-    const product = store.products.find((item) => isProductAvailable(store.id, item.id)) ?? store.products[0]
+    const stateForDemo = merchantStatesRef.current[store.id] ?? createMerchantStates()[store.id]
+    const product = customerVisibleProducts(stateForDemo).find((item) => isProductAvailable(store.id, item.id)) ?? customerVisibleProducts(stateForDemo)[0]
     const createdAt = new Date().toISOString(); const id = createOperationId(store.category === 'envios' ? 'shipment' : 'order')
     const totalValue = Number((product.price + (store.category === 'envios' ? 0 : store.delivery + 1.9)).toFixed(2))
     const base: IntegratedOperation = {
@@ -1178,6 +1362,7 @@ export function AppProvider({ children }: PropsWithChildren) {
       platformRevenue: 0, payment: 'Visa demo', paymentKind: 'card', paymentState: 'captured', status: 'created', createdAt, updatedAt: createdAt, offerAttempts: 0,
       events: [{ id: `${id}-created`, status: 'created', label: 'Operación simulada creada', at: createdAt, actor: 'system' }],
     }
+    base.coordination = ensureOperationCoordination(base)
     const state = merchantStates[store.id]
     const operation = state.autoAccept ? appendOperationEvent(base, 'accepted', 'system') : base
     operation.platformRevenue = Number(Math.max(0, operation.total - operation.merchantNet - operation.riderPay).toFixed(2))
@@ -1276,8 +1461,8 @@ export function AppProvider({ children }: PropsWithChildren) {
     address, setAddress, addresses, addAddress, selectAddress, deleteAddress, payments, selectPayment, addDemoCard, deletePayment, selectedPayment, walletBalance, walletEntries,
     favorites, toggleFavorite, notices, unreadNotices, markNoticeRead, markAllNoticesRead, supportMessages, sendSupportMessage, settings, toggleSetting, desktopSessionActive, closeDesktopSession,
     cart, cartCount, cartStore, subtotal, deliveryFee, serviceFee, discount, total, promo, applyPromo, addToCart, updateQuantity, clearCart,
-    orderStage, setOrderStage, deliveryKind, activeShipment, activeOrder, activeOperation, operations, ledger, operationStatusText, financeSummary, startOrder, startShipment, advanceDelivery, finishDelivery, cancelOperation, history, reorder, rateOrder,
-    currentMerchantStoreId, selectMerchantStore, merchantStates, isStoreOpen, isProductAvailable, merchantOpen, setMerchantOpen, merchantAutoAccept, setMerchantAutoAccept, merchantOrders, moveMerchantOrder, addMerchantDemoOrder, merchantStock, merchantProductImages, setMerchantProductAvailability, setMerchantProductImageUrl,
+    orderStage, setOrderStage, deliveryKind, activeShipment, activeOrder, activeOperation, operations, getOperationCoordination, sendOperationText, sendOperationImage, escalateOperationChat, ledger, operationStatusText, financeSummary, startOrder, startShipment, advanceDelivery, finishDelivery, cancelOperation, history, reorder, rateOrder,
+    currentMerchantStoreId, selectMerchantStore, merchantStates, isStoreOpen, isProductAvailable, merchantOpen, setMerchantOpen, merchantAutoAccept, setMerchantAutoAccept, merchantOrders, moveMerchantOrder, addMerchantDemoOrder, merchantStock, merchantProductImages, currentMerchantProducts, currentMerchantPublicProfile, setMerchantProductAvailability, setMerchantProductImageUrl, setMerchantBusinessMediaUrl, updateMerchantPublicProfile, createMerchantProduct, updateMerchantProduct, setMerchantProductStatus, archiveMerchantProduct,
     riderOnline, setRiderOnline, riderVoiceNavigation, setRiderVoiceNavigation, riderRouteStage, advanceRiderRoute, riderOffers, activeRiderOffer, acceptRiderOffer, rejectRiderOffer, completeRiderOffer, riderToday, riderHistory,
     adminMaintenance, setAdminMaintenance, adminBlockUndeclared, setAdminBlockUndeclared, adminEnhancedVerification, setAdminEnhancedVerification, incidents, resolveIncident,
   }}>{children}</AppContext.Provider>

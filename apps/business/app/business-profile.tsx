@@ -10,6 +10,7 @@ import { useFeedback } from '@/components/FeedbackProvider'
 import { Button, Header, Kicker } from '@/components/UI'
 import { stores } from '@/data/catalog'
 import { BusinessMediaKind, persistBusinessMedia, removeBusinessMedia } from '@/services/businessMedia'
+import { deleteBusinessImage, publishBusinessImage } from '@/services/backend'
 import { useApp } from '@/context/AppContext'
 import { C, shadow } from '@/theme'
 
@@ -22,8 +23,13 @@ export default function BusinessProfile() {
   const {
     currentMerchantStoreId,
     currentBusinessProfile,
+    currentMerchantPublicProfile,
     updateBusinessProfile,
+    updateMerchantPublicProfile,
+    setMerchantBusinessMediaUrl,
     persistenceStatus,
+    hubConnected,
+    syncNow,
   } = useApp()
   const store = stores.find((item) => item.id === currentMerchantStoreId) ?? stores[0]
   const [email, setEmail] = useState(currentBusinessProfile.email)
@@ -80,23 +86,50 @@ export default function BusinessProfile() {
       setMediaBusy(true)
       const previous = kind === 'logo' ? currentBusinessProfile.logoUri : currentBusinessProfile.coverUri
       const uri = persistBusinessMedia(asset.uri, currentMerchantStoreId, kind, asset.mimeType, previous)
-      updateBusinessProfile(currentMerchantStoreId, kind === 'logo' ? { logoUri: uri } : { coverUri: uri })
+      updateBusinessProfile(currentMerchantStoreId, kind === 'logo'
+        ? { logoUri: uri, logoStatus: 'local' }
+        : { coverUri: uri, coverStatus: 'local' })
+
+      if (!hubConnected) {
+        showToast({
+          title: kind === 'logo' ? 'Logo guardado localmente' : 'Foto guardada localmente',
+          message: 'Inicia Sync Hub y vuelve a publicar para que Customer pueda verla.',
+          tone: 'warning',
+          duration: 4400,
+        })
+        return
+      }
+
+      updateBusinessProfile(currentMerchantStoreId, kind === 'logo' ? { logoStatus: 'publishing' } : { coverStatus: 'publishing' })
+      const result = await publishBusinessImage(currentMerchantStoreId, kind, uri, asset.mimeType ?? 'image/jpeg')
+      if (!result.ok) {
+        updateBusinessProfile(currentMerchantStoreId, kind === 'logo' ? { logoStatus: 'error' } : { coverStatus: 'error' })
+        showToast({ title: 'Imagen guardada, publicación pendiente', message: result.message, tone: 'warning', duration: 4500 })
+        return
+      }
+
+      setMerchantBusinessMediaUrl(kind, result.url)
+      updateBusinessProfile(currentMerchantStoreId, kind === 'logo'
+        ? { logoPublicUrl: result.url, logoStatus: 'published' }
+        : { coverPublicUrl: result.url, coverStatus: 'published' })
+      await syncNow()
       showToast({
-        title: kind === 'logo' ? 'Logo actualizado' : 'Foto del local actualizada',
-        message: kind === 'logo' ? 'La nueva identidad ya aparece en Business.' : 'La portada del local quedó guardada.',
+        title: kind === 'logo' ? 'Logo publicado' : 'Foto del local publicada',
+        message: 'Customer recibirá la nueva identidad comercial.',
         tone: 'success',
       })
-    } catch {
+    } catch (error) {
       showToast({
         title: 'No se guardó la imagen',
-        message: 'Business no pudo copiar esa fotografía. Prueba con otra imagen.',
+        message: error instanceof Error ? error.message : 'Business no pudo procesar esa fotografía.',
         tone: 'error',
         duration: 4200,
       })
     } finally {
       setMediaBusy(false)
     }
-  }, [currentBusinessProfile.coverUri, currentBusinessProfile.logoUri, currentMerchantStoreId, showToast, updateBusinessProfile])
+  }, [currentBusinessProfile.coverUri, currentBusinessProfile.logoUri, currentMerchantStoreId, hubConnected, setMerchantBusinessMediaUrl, showToast, syncNow, updateBusinessProfile])
+
 
   useEffect(() => {
     let mounted = true
@@ -187,11 +220,18 @@ export default function BusinessProfile() {
         {
           label: 'Eliminar',
           tone: 'destructive',
-          onPress: () => {
+          onPress: () => { void (async () => {
+            setMediaBusy(true)
+            const remote = await deleteBusinessImage(currentMerchantStoreId, kind)
             removeBusinessMedia(uri)
-            updateBusinessProfile(currentMerchantStoreId, kind === 'logo' ? { logoUri: null } : { coverUri: null })
-            showToast({ title: 'Imagen eliminada', message: 'La identidad predeterminada quedó restaurada.', tone: 'success' })
-          },
+            setMerchantBusinessMediaUrl(kind, null)
+            updateBusinessProfile(currentMerchantStoreId, kind === 'logo'
+              ? { logoUri: null, logoPublicUrl: null, logoStatus: 'empty' }
+              : { coverUri: null, coverPublicUrl: null, coverStatus: 'empty' })
+            await syncNow()
+            setMediaBusy(false)
+            showToast({ title: 'Imagen eliminada', message: remote.ok ? 'Customer volverá a mostrar la identidad predeterminada.' : 'Se retiró localmente; el archivo remoto se limpiará al recuperar conexión.', tone: remote.ok ? 'success' : 'warning' })
+          })() },
         },
       ],
     })
@@ -207,7 +247,7 @@ export default function BusinessProfile() {
     return null
   }
 
-  const save = () => {
+  const save = async () => {
     if (!dirty || saving) return
     const error = validate()
     if (error) {
@@ -216,19 +256,28 @@ export default function BusinessProfile() {
     }
     setSaving(true)
     updateBusinessProfile(currentMerchantStoreId, normalized)
-    setTimeout(() => {
-      setSaving(false)
-      showDialog({
-        title: 'Perfil comercial actualizado',
-        message: 'Los datos del negocio quedaron guardados en Business.',
-        tone: 'success',
-        actions: [
-          { label: 'Seguir aquí', tone: 'secondary' },
-          { label: 'Volver a la tienda', tone: 'primary', onPress: leaveNow },
-        ],
-      })
-    }, 180)
+    updateMerchantPublicProfile({
+      email: normalized.email,
+      phone: normalized.phone,
+      address: normalized.address,
+      description: normalized.description,
+      businessType: currentBusinessProfile.businessType,
+      logoUrl: currentBusinessProfile.logoPublicUrl,
+      coverUrl: currentBusinessProfile.coverPublicUrl,
+    })
+    const synced = await syncNow()
+    setSaving(false)
+    showDialog({
+      title: synced ? 'Perfil comercial publicado' : 'Perfil guardado en Business',
+      message: synced ? 'Customer recibirá los datos, el logo y la portada publicados.' : 'Los cambios están guardados y se publicarán cuando Sync Hub esté disponible.',
+      tone: synced ? 'success' : 'warning',
+      actions: [
+        { label: 'Seguir aquí', tone: 'secondary' },
+        { label: 'Volver a la tienda', tone: 'primary', onPress: leaveNow },
+      ],
+    })
   }
+
 
   const initials = store.name.split(/\s+/).map((word) => word[0]).join('').slice(0, 2).toUpperCase()
   const status = mediaBusy
@@ -250,7 +299,7 @@ export default function BusinessProfile() {
         <View style={styles.coverBottom}>
           <Kicker light>IDENTIDAD DEL COMERCIO</Kicker>
           <Text style={styles.storeName}>{store.name.toUpperCase()}</Text>
-          <Text style={styles.category}>{store.category.toUpperCase()}</Text>
+          <Text style={styles.category}>{currentMerchantPublicProfile.businessType.toUpperCase()} · {store.category.toUpperCase()}</Text>
         </View>
       </BusinessCover>
 
@@ -259,6 +308,7 @@ export default function BusinessProfile() {
         <MediaButton icon="images-outline" label={currentBusinessProfile.logoUri ? 'CAMBIAR' : 'GALERÍA'} onPress={() => chooseGallery('logo')} disabled={mediaBusy}/>
         <MediaButton icon="trash-outline" label="QUITAR" onPress={() => deleteMedia('logo')} disabled={!currentBusinessProfile.logoUri || mediaBusy}/>
       </View>
+      <Text style={styles.publishState}>{currentBusinessProfile.logoStatus === 'published' ? 'PUBLICADO EN CUSTOMER' : currentBusinessProfile.logoStatus === 'publishing' ? 'PUBLICANDO…' : currentBusinessProfile.logoUri ? 'PENDIENTE DE PUBLICAR' : 'SIN LOGO'}</Text>
 
       <Text style={styles.section}>FOTO DEL LOCAL</Text>
       <View style={styles.actionsRow}>
@@ -266,6 +316,7 @@ export default function BusinessProfile() {
         <MediaButton icon="camera-outline" label="CÁMARA" onPress={takeStorePhoto} disabled={mediaBusy}/>
         <MediaButton icon="trash-outline" label="QUITAR" onPress={() => deleteMedia('cover')} disabled={!currentBusinessProfile.coverUri || mediaBusy}/>
       </View>
+      <Text style={styles.publishState}>{currentBusinessProfile.coverStatus === 'published' ? 'PUBLICADA EN CUSTOMER' : currentBusinessProfile.coverStatus === 'publishing' ? 'PUBLICANDO…' : currentBusinessProfile.coverUri ? 'PENDIENTE DE PUBLICAR' : 'SIN PORTADA'}</Text>
       <Text style={styles.note}>Business conserva una imagen activa por tipo y por comercio. Las copias anteriores se limpian automáticamente.</Text>
 
       <Text style={styles.label}>NOMBRE COMERCIAL</Text>
@@ -284,10 +335,10 @@ export default function BusinessProfile() {
 
       <View style={styles.notice}>
         <Ionicons name="information-circle-outline" size={24}/>
-        <View style={{ flex: 1 }}><Text style={styles.noticeTitle}>IMÁGENES LOCALES DEL PROTOTIPO</Text><Text style={styles.noticeCopy}>El logo y la foto viven dentro de Business. Un backend real deberá subirlos y convertirlos en URLs públicas para Cliente.</Text></View>
+        <View style={{ flex: 1 }}><Text style={styles.noticeTitle}>IDENTIDAD COMPARTIDA</Text><Text style={styles.noticeCopy}>Business publica el logo, la portada y los datos comerciales en Sync Hub. Customer los muestra según el mismo storeId.</Text></View>
       </View>
 
-      <Button label={saving ? 'GUARDANDO…' : dirty ? 'GUARDAR CAMBIOS' : 'SIN CAMBIOS PENDIENTES'} onPress={save} color="black" disabled={!dirty || saving || mediaBusy}/>
+      <Button label={saving ? 'GUARDANDO…' : dirty ? 'GUARDAR CAMBIOS' : 'SIN CAMBIOS PENDIENTES'} onPress={() => void save()} color="black" disabled={!dirty || saving || mediaBusy}/>
     </ScrollView>
   </SafeAreaView>
 }
@@ -311,6 +362,7 @@ const styles = StyleSheet.create({
   mediaButton: { flex: 1, minHeight: 62, alignItems: 'center', justifyContent: 'center', gap: 5, borderWidth: 2, borderColor: C.black, backgroundColor: C.white },
   disabled: { opacity: .35 },
   mediaButtonText: { fontSize: 7, fontWeight: '900' },
+  publishState: { marginTop: 7, color: C.blue, fontSize: 7, fontWeight: '900', textAlign: 'right' },
   note: { marginTop: 8, marginBottom: 18, color: C.gray, fontSize: 7, lineHeight: 11 },
   label: { marginTop: 13, marginBottom: 6, fontSize: 8, fontWeight: '900', letterSpacing: .8 },
   input: { minHeight: 51, paddingHorizontal: 12, borderWidth: 2, borderColor: C.black, backgroundColor: C.white, fontSize: 11, fontWeight: '700' },

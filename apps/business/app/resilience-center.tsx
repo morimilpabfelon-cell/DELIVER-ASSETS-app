@@ -48,7 +48,7 @@ export default function ResilienceCenter() {
   }
 
   return <SafeAreaView style={styles.safe} edges={['top','bottom']}>
-    <Header title="CENTRO DE RESISTENCIA" kicker="QA MULTI-APP · V2.3" onBack={() => router.back()}/>
+    <Header title="CENTRO DE RESISTENCIA" kicker="QA COORDINACIÓN · V2.5" onBack={() => router.back()}/>
     <ScrollView contentContainerStyle={styles.content}>
       <View style={styles.hero}>
         <View style={styles.heroIcon}><Ionicons name="pulse" size={29} color={C.white}/></View>

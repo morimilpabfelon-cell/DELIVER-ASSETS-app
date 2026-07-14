@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 const root=process.cwd(); const checks=[]; const check=(n,c)=>checks.push({n,ok:Boolean(c)});
 const app=JSON.parse(fs.readFileSync(path.join(root,'app.json'),'utf8')).expo; const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8'));
-check('versión 2.3.0',pkg.version==='2.3.0'&&app.version==='2.3.0');
+check('versión 2.5.0',pkg.version==='2.5.0'&&app.version==='2.5.0');
 check('paquete Android exclusivo',app.android.package==='com.deliverassets.business');
 check('bundle iOS exclusivo',app.ios.bundleIdentifier==='com.deliverassets.business');
 check('rol fijo en auth',fs.readFileSync(path.join(root,'app/auth.tsx'),'utf8').includes("const APP_ROLE: AppRole = 'negocio'"));

@@ -1,0 +1,45 @@
+import fs from 'node:fs'
+import path from 'node:path'
+
+const root = process.cwd()
+const read = (file) => fs.readFileSync(path.join(root, file), 'utf8')
+const checks = []
+const check = (name, ok) => checks.push({ name, ok: Boolean(ok) })
+
+const pkg = JSON.parse(read('package.json'))
+const app = JSON.parse(read('app.json')).expo
+const catalog = read('data/catalog.ts')
+const domain = read('data/merchantCatalog.ts')
+const context = read('context/AppContext.tsx')
+const profile = read('app/business-profile.tsx')
+const business = read('app/business.tsx')
+const create = read('app/product/create.tsx')
+const edit = read('app/product/[id].tsx')
+const backend = read('services/backend.ts')
+const hub = read('dev/sync-hub/server.mjs')
+const start = read('scripts/start-business.ps1')
+
+check('Business 2.5.0 sincronizada', pkg.version === '2.5.0' && app.version === '2.5.0')
+check('Android versionCode 25', app.android.versionCode === 25)
+check('schema comercial dinámico', domain.includes('SharedCatalogProduct') && domain.includes('SharedBusinessProfile'))
+check('siete tipos comerciales', ['restaurant','grocery','pharmacy','fashion','footwear','electronics','courier'].every((item) => catalog.includes(`${item}:`)))
+check('quinta categoría Tiendas', catalog.includes("'tiendas'") && catalog.includes("label: 'Tiendas'"))
+check('alta de producto', context.includes('createMerchantProduct') && create.includes('NUEVO PRODUCTO'))
+check('edición de producto', context.includes('updateMerchantProduct') && edit.includes('GUARDAR CAMBIOS'))
+check('archivado histórico', context.includes('archiveMerchantProduct') && edit.includes('ARCHIVAR PRODUCTO'))
+check('ciclo de estados', ['draft','published','paused','out_of_stock','archived'].every((item) => catalog.includes(item)))
+check('variantes y atributos', create.includes('parseVariants') && create.includes('parseAttributes'))
+check('logo público', profile.includes('publishBusinessImage') && profile.includes("kind === 'logo'"))
+check('portada pública', profile.includes('publishBusinessImage') && profile.includes('coverPublicUrl'))
+check('perfil compartido', context.includes('updateMerchantPublicProfile'))
+check('inventario explícito', context.includes('setMerchantProductStatus') && context.includes('setMerchantProductAvailability'))
+check('hub publica medios comerciales', hub.includes('/v1/media/business') && hub.includes('business-media-v1'))
+check('hub publica catálogo v2', hub.includes('catalog-v2'))
+check('cliente de backend v2.4', backend.includes('2.5.0-business'))
+check('arranque rechaza hub antiguo', start.includes('business-media-v1') && start.includes('catalog-v2'))
+check('panel adapta plantilla', business.includes('businessTemplates') && business.includes('currentMerchantProducts'))
+
+const failed = checks.filter((item) => !item.ok)
+for (const item of checks) console.log(`${item.ok ? 'PASS' : 'FAIL'} · ${item.name}`)
+console.log(`\n${checks.length - failed.length}/${checks.length} verificaciones de Fase 1 Business aprobadas.`)
+if (failed.length) process.exit(1)

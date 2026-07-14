@@ -20,7 +20,7 @@ check('limpieza conserva una foto por producto', media.includes('cleanupProductM
 check('catálogo muestra ProductPhoto', catalog.includes('<ProductPhoto'))
 check('editor tiene galería y cámara', editor.includes('launchImageLibraryAsync') && editor.includes('launchCameraAsync'))
 check('editor permite retirar foto', editor.includes('¿Eliminar foto del producto?') && editor.includes('deleteProductImage'))
-check('foto pública vive en merchantStates', context.includes('productImages: Record<number, string | null>'))
+check('foto pública vive en merchantStates', context.includes('currentMerchantState.productImages') && context.includes('setMerchantProductImageUrl'))
 check('publicación usa endpoint central', backend.includes('/v1/media/product'))
 check('Hub sirve archivos por /media', server.includes("url.pathname.startsWith('/media/')"))
 check('Hub limita formato y tamaño', server.includes('Formato de imagen no permitido') && server.includes('4 * 1024 * 1024'))

@@ -15,7 +15,7 @@ check('inventario se guarda por comercio', context.includes('merchantStatesRef.c
 check('sync usa estado comercial más reciente', context.includes('merchantStates: merchantStatesRef.current'))
 check('conflicto no revierte inventario local', context.includes('preserveMerchantState') && context.includes('Business conservó tu cambio'))
 check('acción pendiente se conserva tras conflicto', context.includes("current.filter((action) => action.kind === 'merchant_settings')"))
-check('schema v8 migra schema v7', persistence.includes('APP_SCHEMA_VERSION = 8') && persistence.includes('1, 2, 3, 4, 5, 6, 7'))
+check('schema v10 migra schema v9', persistence.includes('APP_SCHEMA_VERSION = 10') && persistence.includes('1, 2, 3, 4, 5, 6, 7, 8'))
 
 let available = true
 available = false

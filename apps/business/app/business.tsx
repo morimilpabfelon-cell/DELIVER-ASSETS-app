@@ -3,14 +3,14 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import { Ionicons } from '@expo/vector-icons'
-import { stores } from '@/data/catalog'
+import { businessTemplates, stores } from '@/data/catalog'
 import { MerchantOrderState } from '@/data/system'
 import { useApp } from '@/context/AppContext'
 import { useFeedback } from '@/components/FeedbackProvider'
 import { BusinessCover, BusinessLogo, ProductPhoto } from '@/components/BusinessMedia'
 import { Button, Header, Kicker, Metric, SectionTitle, ToggleRow } from '@/components/UI'
 import { RoleDock, DockItem } from '@/components/RoleDock'
-import { C, shadow } from '@/theme'
+import { C, shadow, tone } from '@/theme'
 
 type ViewKey = 'resumen' | 'pedidos' | 'catalogo' | 'finanzas' | 'perfil'
 
@@ -55,9 +55,12 @@ export default function Business() {
     addMerchantDemoOrder,
     merchantStock,
     merchantProductImages,
+    currentMerchantProducts,
+    currentMerchantPublicProfile,
     setMerchantProductAvailability,
     ledger,
     operations,
+    getOperationCoordination,
     hubConnected,
     pendingActions,
     lastHubSyncAt,
@@ -71,6 +74,7 @@ export default function Business() {
   const store = stores.find((item) => item.id === currentMerchantStoreId)
     ?? stores.find((item) => item.name === merchantProfile.name)
     ?? stores[0]
+  const template = businessTemplates[currentMerchantPublicProfile.businessType]
   const relevantOrders = merchantOrders
   const pending = relevantOrders.filter((order) => !['entregado', 'cancelado'].includes(order.state))
   const gross = relevantOrders.filter((order) => order.state !== 'cancelado').reduce((sum, order) => sum + order.total, 0)
@@ -90,8 +94,8 @@ export default function Business() {
   const etaValues = pending.map((order) => Number.parseInt(order.eta, 10)).filter(Number.isFinite)
   const averageEta = etaValues.length ? Math.round(etaValues.reduce((sum, value) => sum + value, 0) / etaValues.length) : 0
   const filtered = useMemo(
-    () => store.products.filter((product) => `${product.name} ${product.group}`.toLowerCase().includes(query.toLowerCase())),
-    [query, store.products],
+    () => currentMerchantProducts.filter((product) => `${product.name} ${product.group} ${product.brand ?? ''}`.toLowerCase().includes(query.toLowerCase())),
+    [currentMerchantProducts, query],
   )
 
   const toggleOpen = () => {
@@ -169,7 +173,16 @@ export default function Business() {
           <Metric label="PREPARACIÓN" value={averageEta ? `${averageEta} min` : '—'} color="red" detail="Promedio de activos"/>
         </View>
         <SectionTitle title="PEDIDOS QUE NECESITAN ACCIÓN" action="VER TODOS →" onPress={() => setView('pedidos')}/>
-        {pending.slice(0, 2).map((order) => <OrderCard key={order.id} order={order} onMove={() => moveMerchantOrder(order.id, nextState(order.state))} onCancel={() => confirmCancel(order.id)}/>) }
+        {pending.slice(0, 2).map((order) => <OrderCard
+          key={order.id}
+          order={order}
+          coordination={getOperationCoordination(order.id)}
+          paymentState={operations.find((item) => item.id === order.id)?.paymentState}
+          onMove={() => moveMerchantOrder(order.id, nextState(order.state))}
+          onCancel={() => confirmCancel(order.id)}
+          onChat={() => router.push({ pathname: '/order-chat/[id]', params: { id: order.id } } as never)}
+          onReceipt={() => router.push({ pathname: '/receipt/[id]', params: { id: order.id } } as never)}
+        />) }
         <SectionTitle title="RENDIMIENTO"/>
         <View style={styles.performance}>
           <View style={styles.performanceHead}><Text style={styles.performanceTitle}>PUNTUACIÓN OPERATIVA</Text><Text style={styles.performanceValue}>{operationalScore}/100</Text></View>
@@ -186,7 +199,16 @@ export default function Business() {
         <Kicker>COLA OPERATIVA</Kicker>
         <Text style={styles.pageTitle}>PEDIDOS{`\n`}EN MOVIMIENTO.</Text>
         <View style={styles.orderFilters}>{flow.slice(0, 4).map((state) => <View key={state} style={styles.filter}><Text style={styles.filterValue}>{relevantOrders.filter((order) => order.state === state).length}</Text><Text style={styles.filterLabel}>{state.toUpperCase()}</Text></View>)}</View>
-        {relevantOrders.map((order) => <OrderCard key={order.id} order={order} onMove={() => moveMerchantOrder(order.id, nextState(order.state))} onCancel={() => confirmCancel(order.id)}/>) }
+        {relevantOrders.map((order) => <OrderCard
+          key={order.id}
+          order={order}
+          coordination={getOperationCoordination(order.id)}
+          paymentState={operations.find((item) => item.id === order.id)?.paymentState}
+          onMove={() => moveMerchantOrder(order.id, nextState(order.state))}
+          onCancel={() => confirmCancel(order.id)}
+          onChat={() => router.push({ pathname: '/order-chat/[id]', params: { id: order.id } } as never)}
+          onReceipt={() => router.push({ pathname: '/receipt/[id]', params: { id: order.id } } as never)}
+        />) }
         <Button
           label="SIMULAR NUEVA ORDEN"
           onPress={() => {
@@ -203,26 +225,37 @@ export default function Business() {
       </>}
 
       {view === 'catalogo' && <>
-        <Kicker>MENÚ E INVENTARIO</Kicker>
-        <Text style={styles.pageTitle}>CATÁLOGO{`\n`}CONTROLADO.</Text>
-        <TextInput value={query} onChangeText={setQuery} placeholder="Buscar producto o grupo" style={styles.search}/>
-        <View style={styles.catalogNotice}><Ionicons name="shield-checkmark" size={21}/><Text style={styles.catalogNoticeText}>{store.name} mantiene un catálogo exclusivo de {store.category}; la disponibilidad se refleja en Cliente cuando Sync Hub está activo.</Text></View>
+        <View style={[styles.catalogHero, { backgroundColor: tone(template.accent) }]}>
+          <Kicker>{template.label.toUpperCase()} · CATÁLOGO PROFESIONAL</Kicker>
+          <Text style={styles.catalogHeroTitle}>{template.catalogTitle}</Text>
+          <Text style={styles.catalogHeroCopy}>{template.catalogSubtitle}</Text>
+          <View style={styles.catalogHeroStats}>
+            <Text style={styles.catalogHeroStat}>{currentMerchantProducts.filter((item) => item.status === 'published').length} PUBLICADOS</Text>
+            <Text style={styles.catalogHeroStat}>{currentMerchantProducts.filter((item) => item.status === 'out_of_stock').length} AGOTADOS</Text>
+            <Text style={styles.catalogHeroStat}>{currentMerchantProducts.filter((item) => item.status === 'draft').length} BORRADORES</Text>
+          </View>
+        </View>
+        <TextInput value={query} onChangeText={setQuery} placeholder={`Buscar en ${template.catalogTitle.toLowerCase()}`} style={styles.search}/>
+        <View style={[styles.catalogNotice, { backgroundColor: tone(template.accent) }]}><Ionicons name="layers-outline" size={21}/><Text style={styles.catalogNoticeText}>{store.name} usa la plantilla {template.label}. Customer recibe exactamente los productos publicados, sus fotos, precios, variantes y disponibilidad.</Text></View>
+        <Button label="AGREGAR PRODUCTO" onPress={() => router.push('/product/create')} color="black" icon="add"/>
+        <View style={styles.catalogList}>
         {filtered.map((product) => {
-          const stock = merchantStock[product.id] !== false
+          const stock = merchantStock[product.id] !== false && product.status === 'published'
           const localMedia = currentBusinessProfile.productMedia[product.id]
           const imageUri = localMedia?.localUri ?? merchantProductImages[product.id]
-          return <View key={product.id} style={[styles.product, !stock && styles.productUnavailable]}> 
+          const archived = product.status === 'archived'
+          return <View key={product.id} style={[styles.product, (!stock || archived) && styles.productUnavailable]}> 
             <Pressable accessibilityLabel={`Editar ${product.name}`} onPress={() => router.push({ pathname: '/product/[id]', params: { id: String(product.id) } })}>
               <ProductPhoto uri={imageUri} symbol={product.symbol} size={66}/>
             </Pressable>
             <Pressable style={styles.productInfo} onPress={() => router.push({ pathname: '/product/[id]', params: { id: String(product.id) } })}>
-              <Text style={styles.productGroup}>{product.group.toUpperCase()}</Text>
+              <Text style={styles.productGroup}>{product.group.toUpperCase()} · {product.status.toUpperCase()}</Text>
               <Text style={styles.productName}>{product.name}</Text>
-              <Text style={styles.productPrice}>S/ {product.price.toFixed(2)}</Text>
-              <Text style={styles.productMediaStatus}>{imageUri ? localMedia?.status === 'published' || merchantProductImages[product.id] ? 'FOTO PUBLICADA' : 'FOTO LOCAL' : 'SIN FOTO · TOCA PARA EDITAR'}</Text>
+              <Text style={styles.productPrice}>S/ {product.price.toFixed(2)}{product.brand ? ` · ${product.brand}` : ''}</Text>
+              <Text style={styles.productMediaStatus}>{imageUri ? localMedia?.status === 'published' || merchantProductImages[product.id] ? 'FOTO PUBLICADA' : 'FOTO LOCAL' : 'SIN FOTO'}{product.variants?.length ? ` · ${product.variants.length} VARIANTES` : ''}</Text>
             </Pressable>
             <View style={styles.productActions}>
-              <Pressable
+              {!archived && <Pressable
                 accessibilityRole="switch"
                 accessibilityState={{ checked: stock }}
                 onPress={() => {
@@ -231,13 +264,13 @@ export default function Business() {
                 }}
                 style={[styles.stock, stock ? styles.inStock : styles.outStock]}
               >
-                <Text style={styles.stockText}>{stock ? 'ACTIVO' : 'AGOTADO'}</Text>
-              </Pressable>
-              <Pressable style={styles.editProduct} onPress={() => router.push({ pathname: '/product/[id]', params: { id: String(product.id) } })}><Text style={styles.editProductText}>EDITAR</Text></Pressable>
+                <Text style={styles.stockText}>{stock ? 'ACTIVO' : product.status === 'draft' ? 'BORRADOR' : 'AGOTADO'}</Text>
+              </Pressable>}
+              <Pressable style={styles.editProduct} onPress={() => router.push({ pathname: '/product/[id]', params: { id: String(product.id) } })}><Text style={styles.editProductText}>{archived ? 'HISTORIAL' : 'EDITAR'}</Text></Pressable>
             </View>
           </View>
         })}
-        <Button label="AGREGAR PRODUCTO" onPress={() => showDialog({ title: 'Nuevo producto', message: 'El alta de productos requiere versionado del catálogo, validación de categoría y publicación en Cliente. Se implementará como módulo auditado, no como un formulario aislado.', tone: 'info' })} color="yellow" icon="add"/>
+        </View>
       </>}
 
       {view === 'finanzas' && <>
@@ -253,9 +286,9 @@ export default function Business() {
       {view === 'perfil' && <>
         <Kicker>CONFIGURACIÓN DEL NEGOCIO</Kicker>
         <Text style={styles.pageTitle}>TU TIENDA.{`\n`}TUS REGLAS.</Text>
-        <BusinessCover uri={currentBusinessProfile.coverUri} height={210}>
-          <View style={styles.profileTop}><BusinessLogo uri={currentBusinessProfile.logoUri} initials={initials(store.name)} size={72}/><Text style={styles.profileStatus}>{merchantOpen ? 'ABIERTA' : 'PAUSADA'}</Text></View>
-          <View style={styles.profileBottom}><Text style={styles.storeName}>{merchantProfile.name.toUpperCase()}</Text><Text style={styles.storeMeta}>{currentBusinessProfile.description}</Text></View>
+        <BusinessCover uri={currentBusinessProfile.coverUri ?? currentMerchantPublicProfile.coverUrl} height={210}>
+          <View style={styles.profileTop}><BusinessLogo uri={currentBusinessProfile.logoUri ?? currentMerchantPublicProfile.logoUrl} initials={initials(store.name)} size={72}/><Text style={styles.profileStatus}>{merchantOpen ? 'ABIERTA' : 'PAUSADA'}</Text></View>
+          <View style={styles.profileBottom}><Text style={styles.storeName}>{currentMerchantPublicProfile.name.toUpperCase()}</Text><Text style={styles.storeMeta}>{currentMerchantPublicProfile.description}</Text><Text style={styles.publicStatus}>{currentMerchantPublicProfile.logoUrl && currentMerchantPublicProfile.coverUrl ? 'IDENTIDAD PUBLICADA EN CUSTOMER' : 'IDENTIDAD PENDIENTE DE PUBLICAR'}</Text></View>
         </BusinessCover>
         <Button label="EDITAR PERFIL COMERCIAL" onPress={() => router.push('/business-profile')} color="yellow" icon="create-outline"/>
         <View style={styles.contactCard}><Text style={styles.contactLabel}>CONTACTO DEL LOCAL</Text><Text style={styles.contactValue}>{currentBusinessProfile.email}</Text><Text style={styles.contactValue}>{currentBusinessProfile.phone}</Text><Text style={styles.contactValue}>{currentBusinessProfile.address}</Text></View>
@@ -279,7 +312,23 @@ export default function Business() {
   </SafeAreaView>
 }
 
-function OrderCard({ order, onMove, onCancel }: { order: { id: string; customer: string; items: string; total: number; eta: string; state: MerchantOrderState }; onMove: () => void; onCancel: () => void }) {
+function OrderCard({
+  order,
+  coordination,
+  paymentState,
+  onMove,
+  onCancel,
+  onChat,
+  onReceipt,
+}: {
+  order: { id: string; customer: string; items: string; total: number; eta: string; state: MerchantOrderState }
+  coordination: ReturnType<ReturnType<typeof useApp>['getOperationCoordination']>
+  paymentState?: string
+  onMove: () => void
+  onCancel: () => void
+  onChat: () => void
+  onReceipt: () => void
+}) {
   const color = order.state === 'nuevo' ? C.yellow : order.state === 'listo' ? C.mint : C.white
   return <View style={[styles.order, { backgroundColor: color }]}> 
     <View style={styles.orderTop}><Text style={styles.orderId}>{order.id}</Text><Text style={styles.orderState}>{order.state.toUpperCase()}</Text></View>
@@ -295,6 +344,17 @@ function OrderCard({ order, onMove, onCancel }: { order: { id: string; customer:
             {order.state === 'nuevo' && <Pressable onPress={onCancel} style={styles.orderReject}><Text style={styles.orderRejectText}>RECHAZAR</Text></Pressable>}
             <Pressable onPress={onMove} style={styles.orderAction}><Text style={styles.orderActionText}>{order.state === 'nuevo' ? 'ACEPTAR' : 'AVANZAR'} →</Text></Pressable>
           </View>}
+    </View>
+    <View style={styles.orderCoordination}>
+      <Pressable onPress={onChat} style={styles.orderCoordinationButton}>
+        <Ionicons name="chatbubbles-outline" size={16}/>
+        <Text style={styles.orderCoordinationText}>CHAT · {coordination?.messages.length ?? 0}</Text>
+      </Pressable>
+      <Pressable onPress={onReceipt} style={[styles.orderCoordinationButton, styles.orderReceiptButton]}>
+        <Ionicons name="receipt-outline" size={16}/>
+        <Text style={styles.orderCoordinationText}>{paymentState === 'captured' ? 'PAGO CONFIRMADO' : paymentState === 'cash_due' ? 'EFECTIVO PENDIENTE' : 'VER BOLETA'}</Text>
+      </Pressable>
+      {coordination?.escalated && <View style={styles.orderEscalated}><Ionicons name="shield" size={14}/><Text style={styles.orderEscalatedText}>CONTROL</Text></View>}
     </View>
   </View>
 }
@@ -331,6 +391,18 @@ const styles = StyleSheet.create({
   orderReject: { minHeight: 39, paddingHorizontal: 9, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: C.black, backgroundColor: C.white }, orderRejectText: { fontSize: 6, fontWeight: '900', color: C.red },
   orderAction: { minHeight: 39, paddingHorizontal: 11, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: C.black, backgroundColor: C.black }, orderActionText: { color: C.white, fontSize: 7, fontWeight: '900' },
   orderWaiting: { fontSize: 7, fontWeight: '900', color: C.blue },
+  orderCoordination: { marginTop: 10, paddingTop: 9, flexDirection: 'row', flexWrap: 'wrap', gap: 6, borderTopWidth: 1, borderColor: C.black },
+  orderCoordinationButton: { minHeight: 35, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 5, borderWidth: 2, borderColor: C.black, backgroundColor: C.white },
+  orderReceiptButton: { backgroundColor: C.mint },
+  orderCoordinationText: { fontSize: 6, fontWeight: '900' },
+  orderEscalated: { minHeight: 35, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 2, borderColor: C.black, backgroundColor: C.yellow },
+  orderEscalatedText: { fontSize: 6, fontWeight: '900' },
+  catalogHero: { minHeight: 210, marginBottom: 14, padding: 16, justifyContent: 'flex-end', borderWidth: 3, borderColor: C.black, ...shadow },
+  catalogHeroTitle: { marginTop: 9, fontSize: 31, lineHeight: 29, fontWeight: '900', letterSpacing: -1.4 },
+  catalogHeroCopy: { marginTop: 7, maxWidth: 310, fontSize: 8, lineHeight: 12, fontWeight: '700' },
+  catalogHeroStats: { marginTop: 18, flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  catalogHeroStat: { paddingHorizontal: 8, paddingVertical: 5, borderWidth: 1, borderColor: C.black, backgroundColor: C.white, fontSize: 6, fontWeight: '900' },
+  catalogList: { marginTop: 12 },
   search: { minHeight: 49, marginBottom: 11, paddingHorizontal: 11, borderWidth: 2, borderColor: C.black, backgroundColor: C.white, fontSize: 10 },
   catalogNotice: { minHeight: 65, marginBottom: 12, padding: 11, flexDirection: 'row', alignItems: 'center', gap: 9, borderWidth: 2, borderColor: C.black, backgroundColor: C.yellow }, catalogNoticeText: { flex: 1, fontSize: 8, fontWeight: '800', lineHeight: 12 },
   product: { minHeight: 96, padding: 9, flexDirection: 'row', alignItems: 'center', gap: 9, borderWidth: 2, borderBottomWidth: 0, borderColor: C.black, backgroundColor: C.white },
@@ -345,7 +417,7 @@ const styles = StyleSheet.create({
   balanceValue: { marginTop: 20, color: C.yellow, fontSize: 42, fontWeight: '900', letterSpacing: -2 }, balanceDate: { marginTop: 6, color: C.white, fontSize: 8 }, balanceMark: { position: 'absolute', right: -10, bottom: -25, color: 'rgba(255,255,255,.16)', fontSize: 100, fontWeight: '900' },
   movement: { minHeight: 65, padding: 11, flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 2, borderBottomWidth: 0, borderColor: C.black, backgroundColor: C.white }, movementDate: { width: 42, fontSize: 7, fontWeight: '900' }, movementTitle: { flex: 1, fontSize: 9, fontWeight: '800' }, movementValue: { fontSize: 10, fontWeight: '900' },
   profileTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }, profileStatus: { paddingHorizontal: 9, paddingVertical: 5, borderWidth: 1, borderColor: C.white, color: C.white, fontSize: 7, fontWeight: '900' }, profileBottom: { marginTop: 'auto' },
-  storeName: { color: C.white, fontSize: 25, fontWeight: '900' }, storeMeta: { marginTop: 5, color: C.yellow, fontSize: 8 },
+  storeName: { color: C.white, fontSize: 25, fontWeight: '900' }, storeMeta: { marginTop: 5, color: C.yellow, fontSize: 8 }, publicStatus: { marginTop: 7, color: C.mint, fontSize: 6, fontWeight: '900' },
   contactCard: { marginTop: 10, marginBottom: 18, padding: 13, borderWidth: 2, borderColor: C.black, backgroundColor: C.white }, contactLabel: { marginBottom: 8, fontSize: 8, fontWeight: '900' }, contactValue: { marginTop: 4, fontSize: 9, fontWeight: '700' },
   settingGroup: { marginBottom: 18 }, groupEnd: { height: 2, backgroundColor: C.black },
   settingsRow: { minHeight: 66, padding: 10, flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 2, borderBottomWidth: 0, borderColor: C.black, backgroundColor: C.white },

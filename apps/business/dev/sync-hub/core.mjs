@@ -30,7 +30,7 @@ function stableJson(value) {
 
 export function createInitialState() {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     revision: 0,
     updatedAt: new Date(0).toISOString(),
     domainRevisions: { ...EMPTY_REVISIONS },
@@ -49,6 +49,44 @@ function mergeEvents(first = [], second = []) {
     if (!existing || asTime(event.at) >= asTime(existing.at)) map.set(event.id, event)
   }
   return [...map.values()].sort((a, b) => asTime(a.at) - asTime(b.at))
+}
+
+function mergeChatMessages(first = [], second = []) {
+  const map = new Map()
+  for (const message of [...first, ...second]) {
+    if (!message || typeof message.id !== 'string') continue
+    const existing = map.get(message.id)
+    if (!existing || asTime(message.createdAt) >= asTime(existing.createdAt)) map.set(message.id, message)
+  }
+  return [...map.values()].sort((a, b) => asTime(a.createdAt) - asTime(b.createdAt))
+}
+
+function mergeParticipants(first = [], second = []) {
+  const map = new Map()
+  for (const participant of [...first, ...second]) {
+    if (!participant?.role || !participant?.id) continue
+    const key = `${participant.role}:${participant.id}`
+    const existing = map.get(key)
+    if (!existing || asTime(participant.joinedAt) < asTime(existing.joinedAt)) map.set(key, participant)
+  }
+  return [...map.values()].sort((a, b) => asTime(a.joinedAt) - asTime(b.joinedAt))
+}
+
+function mergeCoordination(current, incoming, operation) {
+  const terminal = operation.status === 'delivered' || operation.status === 'cancelled'
+  if (!current && !incoming) return undefined
+  const first = current ?? {}
+  const second = incoming ?? {}
+  return {
+    status: terminal || first.status === 'closed' || second.status === 'closed' ? 'closed' : 'open',
+    participants: mergeParticipants(first.participants, second.participants),
+    messages: mergeChatMessages(first.messages, second.messages),
+    escalated: Boolean(first.escalated || second.escalated),
+    escalatedAt: newestIso(first.escalatedAt, second.escalatedAt),
+    adminJoinedAt: newestIso(first.adminJoinedAt, second.adminJoinedAt),
+    closedAt: terminal ? newestIso(first.closedAt, second.closedAt, operation.updatedAt) : first.closedAt ?? second.closedAt,
+    receipt: first.receipt ?? second.receipt,
+  }
 }
 
 function resolveStatus(current, incoming) {
@@ -100,11 +138,15 @@ export function mergeOperation(current, incoming) {
     cancelledAt: status === 'cancelled' ? newestIso(current.cancelledAt, incoming.cancelledAt, updatedAt) : current.cancelledAt,
     cancellationReason: status === 'cancelled' ? incoming.cancellationReason ?? current.cancellationReason : current.cancellationReason,
   }
+  merged.coordination = mergeCoordination(current.coordination, incoming.coordination, merged)
 
   if (rejectedIncomingStatus) merged.paymentState = current.paymentState
   if (status === 'delivered' && merged.paymentState === 'cash_due') merged.paymentState = 'captured'
   if (status === 'cancelled' && !['refunded', 'failed'].includes(merged.paymentState)) {
     merged.paymentState = merged.paymentState === 'captured' ? 'refunded' : 'failed'
+  }
+  if (merged.coordination?.receipt) {
+    merged.coordination.receipt.paymentState = merged.paymentState
   }
   return merged
 }
@@ -131,7 +173,7 @@ function normalizeRevisions(value) {
 
 export function publicState(state) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     revision: state.revision,
     updatedAt: state.updatedAt,
     domainRevisions: { ...state.domainRevisions },

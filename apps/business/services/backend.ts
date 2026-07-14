@@ -80,7 +80,7 @@ export async function pullHubState(options: Pick<SyncOptions, 'timeoutMs' | 'sim
     return { ok: false, mode: 'local', message: 'El modo local no consulta el Sync Hub.', attempts: 0 }
   }
   try {
-    const response = await requestJson(`${apiUrl.replace(/\/$/, '')}/v1/state`, { method: 'GET', headers: { 'X-DA-Client-Version': '2.3.0-business' } }, timeoutMs)
+    const response = await requestJson(`${apiUrl.replace(/\/$/, '')}/v1/state`, { method: 'GET', headers: { 'X-DA-Client-Version': '2.5.0-business' } }, timeoutMs)
     const body = await response.json() as { ok?: boolean; state?: SharedHubState; message?: string }
     if (!response.ok || !body.ok || !body.state) return { ok: false, mode: 'remote', message: body.message ?? `Servidor respondió ${response.status}.`, attempts: 1 }
     return { ok: true, mode: 'remote', syncedAt: new Date().toISOString(), attempts: 1, state: body.state, accepted: { operations: false, merchants: false, admin: false }, duplicate: false }
@@ -123,7 +123,7 @@ export async function syncSnapshot(snapshot: PersistedAppSnapshot, options: Sync
         headers: {
           'Content-Type': 'application/json',
           'Idempotency-Key': options.idempotencyKey ?? `snapshot-${appId}-${snapshot.updatedAt}`,
-          'X-DA-Client-Version': '2.3.0-business',
+          'X-DA-Client-Version': '2.5.0-business',
         },
         body: JSON.stringify(envelope),
       }, timeoutMs)
@@ -159,7 +159,7 @@ export async function deleteProductImage(storeId: number, productId: number): Pr
   try {
     const response = await requestJson(`${apiUrl.replace(/\/$/, '')}/v1/media/product/delete`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-DA-Client-Version': '2.3.0-business' },
+      headers: { 'Content-Type': 'application/json', 'X-DA-Client-Version': '2.5.0-business' },
       body: JSON.stringify({ storeId, productId }),
     }, 8000)
     const body = await response.json() as { ok?: boolean; message?: string }
@@ -184,7 +184,7 @@ export async function publishProductImage(
     const base64 = await file.base64()
     const response = await requestJson(`${apiUrl.replace(/\/$/, '')}/v1/media/product`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-DA-Client-Version': '2.3.0-business' },
+      headers: { 'Content-Type': 'application/json', 'X-DA-Client-Version': '2.5.0-business' },
       body: JSON.stringify({ storeId, productId, mimeType, base64 }),
     }, 15000)
     const body = await response.json() as { ok?: boolean; url?: string; message?: string }
@@ -192,5 +192,49 @@ export async function publishProductImage(
     return { ok: true, url: body.url }
   } catch (error) {
     return { ok: false, message: error instanceof Error && error.name === 'AbortError' ? 'La publicación excedió 15 segundos.' : 'No fue posible publicar la fotografía.' }
+  }
+}
+
+export type BusinessImageKind = 'logo' | 'cover'
+export type BusinessImagePublishResult = { ok: true; url: string } | { ok: false; message: string }
+
+export async function deleteBusinessImage(storeId: number, kind: BusinessImageKind): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (requestedMode === 'local') return { ok: false, message: 'El modo local no elimina imágenes publicadas.' }
+  try {
+    const response = await requestJson(`${apiUrl.replace(/\/$/, '')}/v1/media/business/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-DA-Client-Version': '2.5.0-business' },
+      body: JSON.stringify({ storeId, kind }),
+    }, 8000)
+    const body = await response.json() as { ok?: boolean; message?: string }
+    if (!response.ok || !body.ok) return { ok: false, message: body.message ?? `Servidor respondió ${response.status}.` }
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, message: error instanceof Error && error.name === 'AbortError' ? 'La eliminación excedió 8 segundos.' : 'No fue posible eliminar la imagen publicada.' }
+  }
+}
+
+export async function publishBusinessImage(
+  storeId: number,
+  kind: BusinessImageKind,
+  fileUri: string,
+  mimeType = 'image/jpeg',
+): Promise<BusinessImagePublishResult> {
+  if (requestedMode === 'local') return { ok: false, message: 'El modo local no publica imágenes.' }
+  try {
+    const file = new File(fileUri)
+    if (!file.exists || file.size <= 0) return { ok: false, message: 'La imagen local no existe.' }
+    if (file.size > 5 * 1024 * 1024) return { ok: false, message: 'La imagen debe pesar menos de 5 MB para publicarse.' }
+    const base64 = await file.base64()
+    const response = await requestJson(`${apiUrl.replace(/\/$/, '')}/v1/media/business`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-DA-Client-Version': '2.5.0-business' },
+      body: JSON.stringify({ storeId, kind, mimeType, base64 }),
+    }, 18000)
+    const body = await response.json() as { ok?: boolean; url?: string; message?: string }
+    if (!response.ok || !body.ok || !body.url) return { ok: false, message: body.message ?? `Servidor respondió ${response.status}.` }
+    return { ok: true, url: body.url }
+  } catch (error) {
+    return { ok: false, message: error instanceof Error && error.name === 'AbortError' ? 'La publicación excedió 18 segundos.' : 'No fue posible publicar la imagen comercial.' }
   }
 }

@@ -1,132 +1,82 @@
-# DELIVER ASSETS Business v2.3
+# DELIVER ASSETS Business v2.5
 
-Actualización exclusiva de Business. Customer, Rider y Control no forman parte del paquete.
+Fase 2 de coordinación por pedido.
 
-La interfaz principal, pedidos, finanzas y navegación permanecen intactos. Esta versión corrige el inventario reversible y añade fotografía comercial por producto.
+Conserva todo lo implementado hasta Business v2.4:
 
-## Inventario corregido
+- logo y portada;
+- perfil comercial;
+- catálogo profesional;
+- productos y variantes;
+- inventario reversible;
+- pedidos;
+- finanzas;
+- identidad por comercio;
+- Sync Hub.
 
-Business guarda el estado explícito que el operador solicita:
+## Chat del pedido
 
-```text
-ACTIVAR    → producto disponible
-DESACTIVAR → producto agotado
-```
-
-El cambio no depende de invertir un valor anterior. Si la sincronización recibe una revisión comercial más antigua, Business conserva el valor local y vuelve a conciliarlo en lugar de apagar nuevamente el producto.
-
-## Ficha profesional del producto
-
-Ruta:
-
-```text
-Catálogo → Editar
-```
-
-Cada producto permite:
-
-- foto desde Galería;
-- foto con Cámara;
-- recorte 4:3;
-- publicación al Sync Hub;
-- eliminación de fotografía;
-- indicador de publicación;
-- activación y agotamiento explícitos.
-
-Estados visuales:
+Cada tarjeta de pedido incorpora:
 
 ```text
-SIN FOTO
-GUARDADA EN EL TELÉFONO
-PENDIENTE DE PUBLICAR
-PUBLICANDO
-PUBLICADA
+CHAT · cantidad de mensajes
+PAGO CONFIRMADO / EFECTIVO PENDIENTE
 ```
 
-La foto debe representar exactamente el producto que recibe el cliente.
+Business puede:
 
-## Publicación para Customer
+- responder al cliente;
+- enviar fotografías;
+- tomar evidencias con cámara;
+- leer cambios automáticos del pedido;
+- solicitar intervención de Control;
+- consultar la boleta;
+- revisar el historial cerrado.
 
-Business guarda una copia privada y publica otra mediante:
+El acceso se limita al comercio seleccionado. Un negocio no puede abrir el chat ni la boleta de otro negocio desde Business.
+
+## Boleta y pago
+
+Business conoce desde el ingreso del pedido:
+
+- total;
+- productos;
+- método;
+- estado financiero;
+- número de boleta.
+
+La boleta no reemplaza la facturación fiscal real. Es el comprobante operativo del prototipo.
+
+## Cierre
+
+Cuando el pedido queda entregado o cancelado:
 
 ```text
-POST /v1/media/product
+CHAT CERRADO
+SOLO LECTURA
+HISTORIAL CONSERVADO
 ```
 
-El Sync Hub devuelve una URL y la registra en:
-
-```text
-merchantStates[storeId].productImages[productId]
-```
-
-Customer necesita la versión compatible que renderiza esas URLs. Una URI privada de Android no puede compartirse directamente entre aplicaciones.
-
-## Perfil comercial
-
-Se mantiene por cada comercio:
-
-- logo;
-- foto del local;
-- correo;
-- teléfono;
-- dirección;
-- descripción.
-
-El nombre canónico permanece bloqueado para proteger pedidos, catálogo e IDs.
-
-## Mensajes propios
-
-`FeedbackProvider` conserva los mensajes DELIVER ASSETS para inventario, imágenes, perfil, pedidos y sincronización. Los permisos oficiales de Android mantienen el diseño del sistema.
-
-## Sync Hub compartido
-
-Business utiliza por defecto:
-
-```text
-C:\DA\deliver-assets-hub\hub-state.json
-C:\DA\deliver-assets-hub\media\
-```
-
-Eso permite que Business publique datos e imágenes que Customer puede leer cuando ambas apps se ejecutan de una en una contra el mismo Hub.
-
-Iniciar solamente Business:
+## Ejecución
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\start-business.ps1
 ```
 
-Procesos:
+Activa:
 
 ```text
-Business Metro → 8082
-Sync Hub       → 9090
+Business → 8082
+Coordination Hub → 9090
 ```
 
-Detener el Hub:
+Customer puede permanecer cerrado mientras Business responde. Los cambios quedan en el Hub.
 
-```powershell
-.\scripts\stop-business.ps1
-```
-
-## Instalación Android
-
-Business v2.2 ya incorporaba `expo-image-picker` y `expo-file-system`. Primero prueba v2.3 sin recompilar. Si el development build instalado no carga el código actualizado:
-
-```powershell
-npm run android:device
-```
-
-Package Android:
-
-```text
-com.deliverassets.business
-```
-
-## Auditoría
+## QA
 
 ```powershell
 npm run qa
 ```
 
-Incluye TypeScript, ESLint, aislamiento, perfil comercial, medios, inventario reversible, publicación de imágenes, mensajes y tamaño.
+Todas las auditorías de Business y la Fase 2 fueron aprobadas.

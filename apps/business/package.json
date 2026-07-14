@@ -1,7 +1,7 @@
 {
   "name": "deliver-assets-business",
   "main": "expo-router/entry",
-  "version": "2.3.0",
+  "version": "2.5.0",
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
@@ -11,7 +11,7 @@
     "lint": "expo lint",
     "android:device": "expo run:android --device --port 8082",
     "start:device": "expo start --dev-client --localhost --clear --port 8082",
-    "qa": "npm run typecheck && npm run lint && npm run qa:split && npm run qa:business && npm run qa:media && npm run qa:inventory && npm run qa:product-media && npm run qa:feedback && npm run qa:size",
+    "qa": "npm run typecheck && npm run lint && npm run qa:split && npm run qa:business && npm run qa:media && npm run qa:inventory && npm run qa:product-media && npm run qa:feedback && npm run qa:size && npm run qa:phase1 && npm run qa:phase2",
     "doctor": "expo-doctor",
     "qa:split": "node scripts/split-audit.mjs",
     "qa:business": "node scripts/business-audit.mjs",
@@ -20,7 +20,9 @@
     "qa:size": "node scripts/size-audit.mjs",
     "android:release": "expo run:android --variant release --port 8082",
     "qa:inventory": "node scripts/inventory-audit.mjs",
-    "qa:product-media": "node scripts/product-media-audit.mjs"
+    "qa:product-media": "node scripts/product-media-audit.mjs",
+    "qa:phase1": "node scripts/phase1-catalog-audit.mjs",
+    "qa:phase2": "node scripts/phase2-coordination-audit.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

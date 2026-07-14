@@ -25,7 +25,13 @@ $HubAlive = $false
 $OldHub = $false
 try {
   $Health = Invoke-RestMethod "http://127.0.0.1:9090/health" -TimeoutSec 2
-  $HubAlive = $Health.ok -eq $true -and $Health.capabilities -contains "product-media-v1"
+  $HubAlive = $Health.ok -eq $true `
+    -and $Health.capabilities -contains "product-media-v1" `
+    -and $Health.capabilities -contains "business-media-v1" `
+    -and $Health.capabilities -contains "catalog-v2" `
+    -and $Health.capabilities -contains "coordination-v2" `
+    -and $Health.capabilities -contains "chat-media-v1" `
+    -and $Health.capabilities -contains "receipt-v1"
   $OldHub = $Health.ok -eq $true -and -not $HubAlive
 } catch {}
 
@@ -39,7 +45,7 @@ if ($OldHub) {
 }
 
 if (-not $HubAlive) {
-  Write-Host "Iniciando Sync Hub con soporte para imágenes de producto..." -ForegroundColor Yellow
+  Write-Host "Iniciando Coordination Hub con chat, boleta y catálogo compartido..." -ForegroundColor Yellow
   $Node = (Get-Command node).Source
   $Hub = Start-Process -FilePath $Node `
     -ArgumentList ".\dev\sync-hub\server.mjs" `

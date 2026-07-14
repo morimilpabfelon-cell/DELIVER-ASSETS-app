@@ -2,7 +2,7 @@
   "expo": {
     "name": "DELIVER ASSETS Business",
     "slug": "deliver-assets-business",
-    "version": "2.3.0",
+    "version": "2.5.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "deliverassetsbusiness",
@@ -11,7 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.deliverassets.business",
-      "buildNumber": "23"
+      "buildNumber": "25"
     },
     "android": {
       "package": "com.deliverassets.business",
@@ -23,7 +23,7 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": true,
-      "versionCode": 23
+      "versionCode": 25
     },
     "web": {
       "output": "static",
