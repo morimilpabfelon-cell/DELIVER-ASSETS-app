@@ -1,0 +1,16 @@
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
+import { useRouter } from 'expo-router'
+import { Ionicons } from '@expo/vector-icons'
+import { useApp } from '@/context/AppContext'
+import { Header } from '@/components/UI'
+import { C, tone } from '@/theme'
+
+export default function Notifications() {
+  const router = useRouter(); const { notices, unreadNotices, markNoticeRead, markAllNoticesRead } = useApp()
+  return <SafeAreaView style={styles.safe} edges={['top','bottom']}><Header title="NOTIFICACIONES" kicker={`${unreadNotices} SIN LEER`} onBack={() => router.back()} right={<Pressable onPress={markAllNoticesRead} style={styles.readAll}><Text style={styles.readAllText}>LEER TODO</Text></Pressable>}/><ScrollView contentContainerStyle={styles.content}>
+    {notices.map((notice) => <Pressable key={notice.id} onPress={() => markNoticeRead(notice.id)} style={[styles.notice, !notice.read && styles.unread]}><View style={[styles.icon, { backgroundColor: tone(notice.tone) }]}><Ionicons name={notice.icon as never} size={21} color={notice.tone === 'blue' || notice.tone === 'red' ? C.white : C.black}/></View><View style={{ flex: 1 }}><View style={styles.noticeTop}><Text style={styles.title}>{notice.title.toUpperCase()}</Text><Text style={styles.time}>{notice.time}</Text></View><Text style={styles.body}>{notice.body}</Text>{!notice.read && <Text style={styles.new}>NUEVA</Text>}</View></Pressable>)}
+    <View style={styles.control}><Ionicons name="options" size={21}/><View style={{ flex: 1 }}><Text style={styles.controlTitle}>CONTROL DE ALERTAS</Text><Text style={styles.controlCopy}>Configura pedidos, promociones y seguridad desde Ajustes.</Text></View><Pressable onPress={() => router.push('/settings')}><Text style={styles.arrow}>→</Text></Pressable></View>
+  </ScrollView></SafeAreaView>
+}
+const styles = StyleSheet.create({ safe: { flex: 1, backgroundColor: C.paper }, readAll: { minWidth: 77, height: 42, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: C.black, backgroundColor: C.yellow }, readAllText: { fontSize: 7, fontWeight: '900' }, content: { padding: 16, paddingBottom: 35 }, notice: { minHeight: 94, marginBottom: 9, padding: 10, flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 2, borderColor: C.black, backgroundColor: C.white }, unread: { backgroundColor: '#FFF4CA' }, icon: { width: 50, height: 50, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: C.black }, noticeTop: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 }, title: { flex: 1, fontSize: 10, fontWeight: '900' }, time: { color: C.gray, fontSize: 7 }, body: { marginTop: 5, color: C.gray, fontSize: 8, lineHeight: 11 }, new: { alignSelf: 'flex-start', marginTop: 7, paddingHorizontal: 6, paddingVertical: 3, backgroundColor: C.red, color: C.white, fontSize: 6, fontWeight: '900' }, control: { minHeight: 76, marginTop: 16, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 2, borderColor: C.black, backgroundColor: C.black }, controlTitle: { color: C.yellow, fontSize: 9, fontWeight: '900' }, controlCopy: { marginTop: 4, color: C.white, fontSize: 8, lineHeight: 11 }, arrow: { color: C.white, fontSize: 23, fontWeight: '900' } })

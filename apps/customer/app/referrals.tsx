@@ -1,0 +1,18 @@
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
+import { useRouter } from 'expo-router'
+import { Ionicons } from '@expo/vector-icons'
+import { Header, Kicker } from '@/components/UI'
+import { C, shadow } from '@/theme'
+import { useApp } from '@/context/AppContext'
+import { referralCode } from '@/utils/profile'
+
+export default function Referrals() {
+  const router = useRouter(); const { profile } = useApp(); const code = referralCode(profile)
+  return <SafeAreaView style={styles.safe} edges={['top','bottom']}><Header title="INVITACIONES" kicker="CRECE CON DA" onBack={() => router.back()}/><ScrollView contentContainerStyle={styles.content}>
+    <View style={styles.hero}><Kicker light>AMBOS GANAN</Kicker><Text style={styles.title}>INVITA.{`\n`}COMPARTE.{`\n`}MUÉVETE.</Text><Text style={styles.copy}>Tu invitado recibe S/ 10 demo y tú obtienes otro beneficio después de su primera entrega.</Text><View style={styles.code}><Text style={styles.codeLabel}>TU CÓDIGO</Text><Text style={styles.codeValue}>{code}</Text><Pressable onPress={() => Alert.alert('Código copiado', code)} style={styles.copyButton}><Ionicons name="copy-outline" size={20}/></Pressable></View></View>
+    <View style={styles.stats}><View><Text style={styles.statValue}>04</Text><Text style={styles.statLabel}>INVITADOS</Text></View><View><Text style={styles.statValue}>02</Text><Text style={styles.statLabel}>ACTIVOS</Text></View><View><Text style={styles.statValue}>S/ 20</Text><Text style={styles.statLabel}>GANADO</Text></View></View>
+    <Text style={styles.section}>CÓMO FUNCIONA</Text>{[['01','Comparte el código','Envíalo a una persona nueva.'],['02','Crea su cuenta','Debe registrar una identidad cliente.'],['03','Completa un pedido','El beneficio se activa tras la entrega.']].map(([number,title,copy]) => <View key={number} style={styles.step}><Text style={styles.stepNumber}>{number}</Text><View style={{ flex: 1 }}><Text style={styles.stepTitle}>{title.toUpperCase()}</Text><Text style={styles.stepCopy}>{copy}</Text></View></View>)}
+  </ScrollView></SafeAreaView>
+}
+const styles = StyleSheet.create({ safe: { flex: 1, backgroundColor: C.paper }, content: { padding: 16, paddingBottom: 35 }, hero: { minHeight: 360, padding: 18, borderWidth: 2, borderColor: C.black, backgroundColor: C.blue, ...shadow }, title: { marginTop: 12, color: C.yellow, fontSize: 48, lineHeight: 39, fontWeight: '900', letterSpacing: -2.5 }, copy: { maxWidth: 300, marginTop: 13, color: C.white, fontSize: 9, lineHeight: 14 }, code: { minHeight: 72, marginTop: 'auto', padding: 10, flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 2, borderColor: C.black, backgroundColor: C.white }, codeLabel: { fontSize: 7, fontWeight: '900' }, codeValue: { flex: 1, fontSize: 20, fontWeight: '900', letterSpacing: 1.4 }, copyButton: { width: 43, height: 43, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: C.black, backgroundColor: C.yellow }, stats: { marginTop: 18, padding: 14, flexDirection: 'row', justifyContent: 'space-between', borderWidth: 2, borderColor: C.black, backgroundColor: C.white }, statValue: { fontSize: 22, fontWeight: '900' }, statLabel: { marginTop: 3, fontSize: 6, fontWeight: '900' }, section: { marginTop: 28, marginBottom: 10, fontSize: 19, fontWeight: '900' }, step: { minHeight: 76, padding: 11, flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 2, borderBottomWidth: 0, borderColor: C.black, backgroundColor: C.white }, stepNumber: { color: C.red, fontSize: 24, fontWeight: '900' }, stepTitle: { fontSize: 10, fontWeight: '900' }, stepCopy: { marginTop: 4, color: C.gray, fontSize: 8 } })

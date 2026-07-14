@@ -1,0 +1,19 @@
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
+import { useRouter } from 'expo-router'
+import { Ionicons } from '@expo/vector-icons'
+import { useApp } from '@/context/AppContext'
+import { Button, Header } from '@/components/UI'
+import { C, shadow } from '@/theme'
+
+export default function Payments() {
+  const router = useRouter(); const { payments, selectPayment, deletePayment, addDemoCard, walletBalance } = useApp()
+  const icon = (kind: string) => kind === 'card' ? 'card' : kind === 'wallet' ? 'wallet' : 'cash'
+  return <SafeAreaView style={styles.safe} edges={['top','bottom']}><Header title="PAGOS" kicker="MÉTODOS Y BILLETERA" onBack={() => router.back()}/><ScrollView contentContainerStyle={styles.content}>
+    <View style={styles.wallet}><Text style={styles.walletLabel}>SALDO DELIVER ASSETS</Text><Text style={styles.walletValue}>S/ {walletBalance.toFixed(2)}</Text><Text style={styles.walletCopy}>Saldo simulado · no representa dinero real.</Text><Text style={styles.walletMark}>DA</Text></View>
+    {payments.map((item) => <View key={item.id} style={[styles.card, item.selected && styles.active]}><Pressable style={styles.cardMain} onPress={() => selectPayment(item.id)}><View style={[styles.icon, item.selected && { backgroundColor: C.mint }]}><Ionicons name={icon(item.kind) as never} size={22}/></View><View style={{ flex: 1 }}><Text style={styles.label}>{item.label.toUpperCase()}</Text><Text style={styles.detail}>{item.detail}</Text></View>{item.selected ? <Ionicons name="checkmark-circle" size={24}/> : <Ionicons name="ellipse-outline" size={23}/>}</Pressable>{item.kind === 'card' && <Pressable onPress={() => deletePayment(item.id)} style={styles.remove}><Text style={styles.removeText}>ELIMINAR TARJETA</Text></Pressable>}</View>)}
+    <Button label="AGREGAR TARJETA DEMO" onPress={addDemoCard} color="black" icon="add"/>
+    <View style={styles.security}><Ionicons name="lock-closed" size={20}/><View style={{ flex: 1 }}><Text style={styles.securityTitle}>PAGOS TOKENIZADOS</Text><Text style={styles.securityCopy}>Una versión real no almacenará números completos de tarjeta en la aplicación.</Text></View></View>
+  </ScrollView></SafeAreaView>
+}
+const styles = StyleSheet.create({ safe: { flex: 1, backgroundColor: C.paper }, content: { padding: 16, paddingBottom: 35 }, wallet: { minHeight: 190, marginBottom: 20, padding: 17, borderWidth: 2, borderColor: C.black, backgroundColor: C.blue, overflow: 'hidden', ...shadow }, walletLabel: { color: C.white, fontSize: 8, fontWeight: '900', letterSpacing: 1 }, walletValue: { marginTop: 18, color: C.yellow, fontSize: 44, fontWeight: '900', letterSpacing: -2.5 }, walletCopy: { marginTop: 7, color: C.white, fontSize: 8 }, walletMark: { position: 'absolute', right: -8, bottom: -22, color: 'rgba(255,255,255,.18)', fontSize: 96, fontWeight: '900', letterSpacing: -8 }, card: { marginBottom: 10, borderWidth: 2, borderColor: C.black, backgroundColor: C.white }, active: { backgroundColor: C.yellow }, cardMain: { minHeight: 76, padding: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }, icon: { width: 47, height: 47, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: C.black, backgroundColor: C.white }, label: { fontSize: 10, fontWeight: '900' }, detail: { marginTop: 4, color: C.gray, fontSize: 8 }, remove: { minHeight: 35, paddingHorizontal: 10, alignItems: 'flex-end', justifyContent: 'center', borderTopWidth: 1, borderColor: C.black }, removeText: { fontSize: 7, fontWeight: '900' }, security: { minHeight: 75, marginTop: 18, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 2, borderColor: C.black, backgroundColor: C.mint }, securityTitle: { fontSize: 9, fontWeight: '900' }, securityCopy: { marginTop: 4, fontSize: 8, lineHeight: 11 } })

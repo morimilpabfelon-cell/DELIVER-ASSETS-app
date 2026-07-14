@@ -1,40 +1,101 @@
-# DELIVER ASSETS Customer
+# DELIVER ASSETS Customer v2.6
 
-Aplicación independiente para clientes de DELIVER ASSETS.
+Actualización de compatibilidad visual con Business v2.3. Mantiene perfil, mensajes propios, múltiples carritos, checkout, DA Express y la identidad visual de Customer.
 
-## Versión preparada
+## Fotografías reales de productos
 
-- Aplicación: Customer
-- Versión: `2.6.0`
-- Android package: `com.deliverassets.customer`
-- Android versionCode: `26`
-- iOS bundle identifier: `com.deliverassets.customer`
-- iOS buildNumber: `26`
-- Expo SDK: `54`
-- Metro: `8081`
-- Sync Hub local: `9090`
+Customer ahora consume:
 
-## Estado funcional preservado
+```text
+merchantStates[storeId].productImages[productId]
+```
 
-- Perfil y fotografía persistentes
-- Mensajes visuales propios
-- Carritos separados por comercio
-- Fotografías de productos sincronizadas
-- Catálogo, inventario y precios compartidos
-- Checkout, pedidos y seguimiento
-- Auditorías y scripts de calidad
+Las imágenes publicadas desde Business aparecen en:
 
-## Archivos que no deben subirse
+- catálogo del comercio;
+- detalle del producto;
+- carrito activo;
+- checkout.
 
-- `node_modules/`
-- `.expo/`
-- `android/`
-- `ios/`
-- `dist/`
-- `dist-test/`
-- `web-build/`
-- `.runtime/`
-- archivos temporales del Sync Hub
-- secretos y variables locales
+Si una imagen no existe, no carga o fue retirada, Customer vuelve al símbolo visual original sin bloquear la compra.
 
-El código fuente se mantiene directamente dentro de esta carpeta, sin mezclar Business, Rider ni Control.
+## Flujo de publicación
+
+```text
+Business selecciona una foto
+→ Business publica al Sync Hub
+→ Hub guarda el archivo y devuelve URL
+→ Business sincroniza productImages
+→ Customer descarga el estado
+→ Customer muestra la foto
+```
+
+La URL lleva una versión para evitar que Android muestre una fotografía antigua desde caché.
+
+## Inventario
+
+Customer continúa respetando el estado publicado por Business:
+
+```text
+Producto activo  → puede abrirse y comprarse
+Producto agotado → se muestra AGOTADO y queda bloqueado
+Tienda pausada   → catálogo visible, compra bloqueada
+```
+
+La normalización del estado remoto conserva inventario e imágenes aunque el snapshot sea de una versión anterior.
+
+## Sync Hub compartido
+
+Customer y Business usan por defecto:
+
+```text
+C:\DA\deliver-assets-hub\hub-state.json
+C:\DA\deliver-assets-hub\media\
+```
+
+El script detecta y reemplaza un Sync Hub antiguo que no tenga soporte para imágenes.
+
+Iniciar solamente Customer:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\start-customer.ps1
+```
+
+Procesos:
+
+```text
+Customer Metro → 8081
+Sync Hub       → 9090
+```
+
+No es necesario abrir Business y Customer simultáneamente. Business puede publicar primero; después Customer utiliza el mismo estado y los mismos archivos compartidos.
+
+## Instalación Android
+
+No se añadieron dependencias nativas respecto de Customer v2.5. Primero prueba sin recompilar:
+
+```powershell
+npm ci
+.\scripts\start-customer.ps1
+```
+
+Si el development build instalado no carga el código nuevo:
+
+```powershell
+npm run android:device
+```
+
+Package:
+
+```text
+com.deliverassets.customer
+```
+
+## Auditoría
+
+```powershell
+npm run qa
+```
+
+Incluye TypeScript, ESLint, aislamiento, perfil, multi-carrito, mensajes, tamaño e integración de fotografías publicadas por Business.
