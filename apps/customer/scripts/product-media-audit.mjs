@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process'
 
 const read = (file) => fs.readFileSync(path.join(process.cwd(), file), 'utf8')
 const context = read('context/AppContext.tsx')
+const merchantCatalog = read('data/merchantCatalog.ts')
 const persistence = read('services/persistence.ts')
 const store = read('app/store/[id].tsx')
 const product = read('app/product/[id].tsx')
@@ -16,10 +17,10 @@ const start = read('scripts/start-customer.ps1')
 const checks = []
 const check = (name, condition) => checks.push({ name, ok: Boolean(condition) })
 
-check('estado comercial incluye imágenes por producto', context.includes('productImages: Record<number, string | null>'))
-check('estado remoto se normaliza sin perder inventario', context.includes('normalizeMerchantStates') && context.includes('productImages: { ...defaults[store.id].productImages'))
+check('estado comercial incluye imágenes por producto', merchantCatalog.includes('productImages: Record<number, string | null>'))
+check('estado remoto se normaliza sin perder inventario', merchantCatalog.includes('normalizeSharedMerchantStates') && merchantCatalog.includes('const productImages = { ...base.productImages'))
 check('getter de imagen es seguro', context.includes('getProductImage') && context.includes('?? null'))
-check('schema v9 migra v8', persistence.includes('APP_SCHEMA_VERSION = 9') && persistence.includes('1, 2, 3, 4, 5, 6, 7, 8'))
+check('schema v11 migra v10', persistence.includes('APP_SCHEMA_VERSION = 11') && persistence.includes('1, 2, 3, 4, 5, 6, 7, 8, 9'))
 check('catálogo muestra fotografía publicada', store.includes('<CustomerProductMedia uri={photo}'))
 check('detalle muestra fotografía publicada', product.includes('<CustomerProductMedia uri={photo}'))
 check('detalle identifica imagen del negocio', product.includes('FOTOGRAFÍA PUBLICADA POR EL NEGOCIO'))
@@ -28,7 +29,7 @@ check('checkout conserva imagen exacta', checkout.includes('getProductImage(line
 check('imagen tiene fallback visual', component.includes('onError') && component.includes('symbol'))
 check('imagen remonta con URL versionada', component.includes('key={visibleUri}'))
 check('Hub sirve media', server.includes("url.pathname.startsWith('/media/')"))
-check('Hub anuncia capacidad', server.includes("capabilities: ['product-media-v1']"))
+check('Hub anuncia capacidad', server.includes("'product-media-v1'") && server.includes("'business-media-v1'") && server.includes("'catalog-v2'"))
 check('arranque usa Hub compartido', start.includes('C:\\DA\\deliver-assets-hub') && start.includes('DA_HUB_MEDIA_PATH'))
 check('arranque reemplaza Hub antiguo', start.includes('Reemplazando una versión antigua del Sync Hub'))
 

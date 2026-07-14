@@ -77,7 +77,7 @@ export async function pullHubState(options: Pick<SyncOptions, 'timeoutMs' | 'sim
     return { ok: false, mode: 'local', message: 'El modo local no consulta el Sync Hub.', attempts: 0 }
   }
   try {
-    const response = await requestJson(`${apiUrl.replace(/\/$/, '')}/v1/state`, { method: 'GET', headers: { 'X-DA-Client-Version': '2.6.0-customer' } }, timeoutMs)
+    const response = await requestJson(`${apiUrl.replace(/\/$/, '')}/v1/state`, { method: 'GET', headers: { 'X-DA-Client-Version': '2.8.0-customer' } }, timeoutMs)
     const body = await response.json() as { ok?: boolean; state?: SharedHubState; message?: string }
     if (!response.ok || !body.ok || !body.state) return { ok: false, mode: 'remote', message: body.message ?? `Servidor respondió ${response.status}.`, attempts: 1 }
     return { ok: true, mode: 'remote', syncedAt: new Date().toISOString(), attempts: 1, state: body.state, accepted: { operations: false, merchants: false, admin: false }, duplicate: false }
@@ -120,7 +120,7 @@ export async function syncSnapshot(snapshot: PersistedAppSnapshot, options: Sync
         headers: {
           'Content-Type': 'application/json',
           'Idempotency-Key': options.idempotencyKey ?? `snapshot-${appId}-${snapshot.updatedAt}`,
-          'X-DA-Client-Version': '2.6.0-customer',
+          'X-DA-Client-Version': '2.8.0-customer',
         },
         body: JSON.stringify(envelope),
       }, timeoutMs)

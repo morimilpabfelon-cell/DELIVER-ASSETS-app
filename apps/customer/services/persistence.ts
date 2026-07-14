@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { stores } from '@/data/catalog'
+import { createSharedMerchantStates, normalizeSharedMerchantStates } from '@/data/merchantCatalog'
 import type { AppNotice, AppRole, Address, Incident, MerchantOrder, OrderRecord, PaymentMethod, RiderDeliveryRecord, RiderOffer, SupportMessage } from '@/data/system'
 import type { IntegratedOperation, LedgerEntry, OperatorProfile, PaymentKind, PaymentState, OperationStatus } from '@/data/operations'
 import type { QueuedAction, TechnicalEvent } from '@/data/resilience'
@@ -9,7 +10,7 @@ import type { CartLine } from '@/data/cart'
 import { normalizeCartLine } from '@/data/cart'
 
 export const APP_STORAGE_KEY = '@deliver-assets/customer-state-v2'
-export const APP_SCHEMA_VERSION = 9
+export const APP_SCHEMA_VERSION = 11
 
 export type PersistedAppSnapshot = {
   schemaVersion: number
@@ -67,13 +68,7 @@ export type PersistedAppSnapshot = {
 type Candidate = Partial<PersistedAppSnapshot> & { schemaVersion?: number }
 
 function initialMerchantStates(): Record<number, MerchantStoreState> {
-  return Object.fromEntries(stores.map((store) => [store.id, {
-    storeId: store.id,
-    open: true,
-    autoAccept: false,
-    stock: Object.fromEntries(store.products.map((product) => [product.id, true])),
-    productImages: Object.fromEntries(store.products.map((product) => [product.id, null])),
-  }]))
+  return createSharedMerchantStates()
 }
 
 function inferPaymentKind(label = ''): PaymentKind {
@@ -184,22 +179,21 @@ function mergeLegacyOperations(candidate: Candidate, normalized: IntegratedOpera
 function normalizeSnapshot(value: unknown): PersistedAppSnapshot | null {
   if (!value || typeof value !== 'object') return null
   const candidate = value as Candidate
-  if (![1, 2, 3, 4, 5, 6, 7, 8, APP_SCHEMA_VERSION].includes(candidate.schemaVersion ?? -1)) return null
+  if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, APP_SCHEMA_VERSION].includes(candidate.schemaVersion ?? -1)) return null
   if (!Array.isArray(candidate.addresses)) return null
 
-  const states = initialMerchantStates()
   const currentMerchantStoreId = typeof candidate.currentMerchantStoreId === 'number' ? candidate.currentMerchantStoreId : 1
-  if (candidate.merchantStates && typeof candidate.merchantStates === 'object') {
-    for (const store of stores) {
-      const saved = candidate.merchantStates[store.id]
-      if (saved) states[store.id] = { ...states[store.id], ...saved, stock: { ...states[store.id].stock, ...(saved.stock ?? {}) }, productImages: { ...states[store.id].productImages, ...(saved.productImages ?? {}) } }
-    }
-  } else {
-    states[currentMerchantStoreId] = {
-      ...states[currentMerchantStoreId],
-      open: candidate.merchantOpen !== false,
-      autoAccept: candidate.merchantAutoAccept === true,
-      stock: { ...states[currentMerchantStoreId].stock, ...(candidate.merchantStock ?? {}) },
+  let states = normalizeSharedMerchantStates(candidate.merchantStates)
+  if (!candidate.merchantStates) {
+    const current = states[currentMerchantStoreId] ?? initialMerchantStates()[currentMerchantStoreId]
+    states = {
+      ...states,
+      [currentMerchantStoreId]: {
+        ...current,
+        open: candidate.merchantOpen !== false,
+        autoAccept: candidate.merchantAutoAccept === true,
+        stock: { ...current.stock, ...(candidate.merchantStock ?? {}) },
+      },
     }
   }
 

@@ -2,7 +2,7 @@
   "expo": {
     "name": "DELIVER ASSETS",
     "slug": "deliver-assets-customer",
-    "version": "2.6.0",
+    "version": "2.8.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "deliverassets",
@@ -11,7 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.deliverassets.customer",
-      "buildNumber": "26"
+      "buildNumber": "28"
     },
     "android": {
       "package": "com.deliverassets.customer",
@@ -23,7 +23,7 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": true,
-      "versionCode": 26
+      "versionCode": 28
     },
     "web": {
       "output": "static",

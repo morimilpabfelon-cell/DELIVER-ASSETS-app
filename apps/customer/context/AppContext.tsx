@@ -4,6 +4,7 @@ import type { Product, Store } from '@/data/catalog'
 import { addOrMergeCartLine, cartLineSignature, createCartLine, normalizeCartLine, updateCartLineById } from '@/data/cart'
 import type { CartLine } from '@/data/cart'
 import { stores } from '@/data/catalog'
+import { businessVisibleProducts, createSharedMerchantStates, customerVisibleProducts, nextCatalogProductId, normalizeSharedMerchantStates, type SharedBusinessProfile, type SharedCatalogProduct, type SharedMerchantState } from '@/data/merchantCatalog'
 import {
   AppNotice,
   AppRole,
@@ -46,6 +47,14 @@ import {
   ShipmentDetails,
 } from '@/data/operations'
 import {
+  appendCoordinationMessage,
+  createCoordinationMessage,
+  ensureOperationCoordination,
+  escalateCoordination,
+  normalizeOperationCoordination,
+  type OperationCoordination,
+} from '@/data/coordination'
+import {
   createActionKey,
   createQueuedAction,
   createTechnicalEvent,
@@ -87,8 +96,8 @@ export type UserSettings = { orderUpdates: boolean; promotions: boolean; securit
 export type UserProfile = { name: string; email: string; phone: string; photoUri?: string | null }
 export type PersistenceStatus = 'loading' | 'ready' | 'saving' | 'error'
 export type SyncStatus = 'local' | 'pending' | 'synced' | 'error'
-export type ActionResult = { ok: boolean; message: string; operationId?: string; code?: 'duplicate' }
-export type MerchantStoreState = { storeId: number; open: boolean; autoAccept: boolean; stock: Record<number, boolean>; productImages: Record<number, string | null> }
+export type ActionResult = { ok: boolean; message: string; operationId?: string; productId?: number; code?: 'duplicate' }
+export type MerchantStoreState = SharedMerchantState
 export type SavedCartSummary = { storeId: number; store: Store; itemCount: number; lineCount: number; subtotal: number; total: number; updatedAt: string }
 
 const defaultSettings: UserSettings = { orderUpdates: true, promotions: true, securityAlerts: true, locationWhileUsing: true, biometric: false, darkMode: false }
@@ -96,13 +105,8 @@ const defaultProfile: UserProfile = { name: 'Eidon Morimil', email: 'eidon@deliv
 const customerId = 'customer-demo'
 const riderId = 'rider-demo'
 
-const createMerchantStates = (): Record<number, MerchantStoreState> => Object.fromEntries(stores.map((store) => [store.id, {
-  storeId: store.id,
-  open: true,
-  autoAccept: false,
-  stock: Object.fromEntries(store.products.map((product) => [product.id, true])),
-  productImages: Object.fromEntries(store.products.map((product) => [product.id, null])),
-}]))
+const createMerchantStates = createSharedMerchantStates
+const normalizeMerchantStates = normalizeSharedMerchantStates
 
 function storeProfile(storeId: number): OperatorProfile {
   const store = stores.find((item) => item.id === storeId) ?? stores[0]
@@ -120,23 +124,6 @@ function suspiciousShipment(content: string): boolean {
   return ['no sé', 'desconocido', 'secreto', 'sin declarar', 'efectivo', 'arma', 'sustancia'].some((term) => value.includes(term))
 }
 
-function normalizeMerchantStates(value: unknown): Record<number, MerchantStoreState> {
-  const defaults = createMerchantStates()
-  if (!value || typeof value !== 'object') return defaults
-  const source = value as Record<number, Partial<MerchantStoreState>>
-  for (const store of stores) {
-    const saved = source[store.id]
-    if (!saved) continue
-    defaults[store.id] = {
-      ...defaults[store.id],
-      ...saved,
-      storeId: store.id,
-      stock: { ...defaults[store.id].stock, ...(saved.stock ?? {}) },
-      productImages: { ...defaults[store.id].productImages, ...(saved.productImages ?? {}) },
-    }
-  }
-  return defaults
-}
 
 function sameJson(first: unknown, second: unknown): boolean {
   return JSON.stringify(first) === JSON.stringify(second)
@@ -248,6 +235,10 @@ export type AppState = {
   activeOrder: ActiveOrder | null
   activeOperation: IntegratedOperation | null
   operations: IntegratedOperation[]
+  getOperationCoordination: (id: string) => OperationCoordination | null
+  sendOperationText: (id: string, text: string) => ActionResult
+  sendOperationImage: (id: string, imageUrl: string) => ActionResult
+  escalateOperationChat: (id: string) => ActionResult
   ledger: LedgerEntry[]
   operationStatusText: string
   financeSummary: { grossVolume: number; merchantCredits: number; riderCredits: number; platformRevenue: number; customerCharges: number; refunds: number }
@@ -266,6 +257,9 @@ export type AppState = {
   isStoreOpen: (storeId: number) => boolean
   isProductAvailable: (storeId: number, productId: number) => boolean
   getProductImage: (storeId: number, productId: number) => string | null
+  getStoreProducts: (storeId: number) => SharedCatalogProduct[]
+  getStorePublicProfile: (storeId: number) => SharedBusinessProfile
+  getStoreProduct: (storeId: number, productId: number) => SharedCatalogProduct | null
   merchantOpen: boolean
   setMerchantOpen: (value: boolean) => void
   merchantAutoAccept: boolean
@@ -384,7 +378,7 @@ export function AppProvider({ children }: PropsWithChildren) {
   const merchantStock = currentMerchantState.stock
 
   const ledger = useMemo(() => deriveLedger(operations), [operations])
-  const history = useMemo(() => deriveCustomerHistory(operations), [operations])
+  const history = useMemo(() => deriveCustomerHistory(operations.filter((operation) => operation.customerId === customerId)), [operations])
   const merchantOrders = useMemo(() => deriveMerchantOrders(operations, currentMerchantStoreId), [operations, currentMerchantStoreId])
   const riderOffers = useMemo(() => deriveRiderOffers(operations, activeRiderOffer?.orderId), [operations, activeRiderOffer?.orderId])
   const riderHistory = useMemo(() => deriveRiderHistory(operations), [operations])
@@ -484,7 +478,7 @@ export function AppProvider({ children }: PropsWithChildren) {
   }, [logTechnicalEvent, networkMode])
 
   const snapshot = useMemo<PersistedAppSnapshot>(() => ({
-    schemaVersion: 9,
+    schemaVersion: 11,
     updatedAt: new Date().toISOString(),
     onboardingComplete,
     role,
@@ -995,8 +989,21 @@ export function AppProvider({ children }: PropsWithChildren) {
   const toggleSetting = (key: keyof UserSettings) => setSettings((current) => ({ ...current, [key]: !current[key] }))
   const closeDesktopSession = () => setDesktopSessionActive(false)
   const isStoreOpen = (storeId: number) => merchantStates[storeId]?.open !== false
-  const isProductAvailable = (storeId: number, productId: number) => isStoreOpen(storeId) && merchantStates[storeId]?.stock[productId] !== false
+  const isProductAvailable = (storeId: number, productId: number) => {
+    const state = merchantStates[storeId]
+    const product = state?.catalog?.[productId]
+    return isStoreOpen(storeId) && Boolean(product) && product.status === 'published' && state.stock[productId] !== false
+  }
   const getProductImage = (storeId: number, productId: number) => merchantStates[storeId]?.productImages?.[productId] ?? null
+  const getStoreProducts = (storeId: number): SharedCatalogProduct[] => {
+    const state = merchantStates[storeId] ?? createMerchantStates()[storeId]
+    return state ? customerVisibleProducts(state) : []
+  }
+  const getStorePublicProfile = (storeId: number): SharedBusinessProfile => {
+    const state = merchantStates[storeId] ?? createMerchantStates()[storeId]
+    return state.publicProfile
+  }
+  const getStoreProduct = (storeId: number, productId: number): SharedCatalogProduct | null => merchantStates[storeId]?.catalog?.[productId] ?? null
 
   const selectCartStore = (storeId: number): boolean => {
     if (!cartLines.some((line) => line.storeId === storeId)) return false
@@ -1050,7 +1057,11 @@ export function AppProvider({ children }: PropsWithChildren) {
   const clearAllCarts = () => { setCartLines([]); setActiveCartStoreId(null); setPromo('') }
   const applyPromo = (code: string) => {
     const value = code.trim().toUpperCase()
-    const valid = value === 'PRIMER20' || (value === 'COMIDA10' && cartStore?.category === 'comida') || (value === 'MERCADO8' && cartStore?.category === 'mercado') || (value === 'CUIDADO5' && cartStore?.category === 'farmacia')
+    const valid = value === 'PRIMER20'
+      || (value === 'COMIDA10' && cartStore?.category === 'comida')
+      || (value === 'MERCADO8' && cartStore?.category === 'mercado')
+      || (value === 'CUIDADO5' && cartStore?.category === 'farmacia')
+      || (value === 'TIENDA7' && cartStore?.category === 'tiendas')
     setPromo(valid ? value : '')
     return valid
   }
@@ -1060,12 +1071,89 @@ export function AppProvider({ children }: PropsWithChildren) {
     paymentState: selectedPayment.kind === 'cash' ? 'cash_due' : 'captured',
   })
 
+  const getOperationCoordination = (id: string): OperationCoordination | null => {
+    const operation = operations.find((item) => item.id === id && item.customerId === customerId)
+    return operation ? normalizeOperationCoordination(operation) : null
+  }
+
+  const sendOperationText = (id: string, value: string): ActionResult => {
+    const textValue = value.trim()
+    if (!textValue) return { ok: false, message: 'Escribe un mensaje antes de enviarlo.' }
+    if (textValue.length > 1200) return { ok: false, message: 'El mensaje supera 1200 caracteres.' }
+    const operation = operations.find((item) => item.id === id && item.customerId === customerId)
+    if (!operation) return { ok: false, message: 'Pedido no encontrado o sin acceso para este cliente.' }
+    const coordination = normalizeOperationCoordination(operation)
+    if (coordination.status === 'closed') return { ok: false, message: 'La conversación terminó y permanece en modo historial.' }
+    const message = createCoordinationMessage(
+      operation.id,
+      'customer',
+      customerId,
+      profile.name,
+      'text',
+      { text: textValue },
+    )
+    setOperations((current) => current.map((item) => item.id === id ? {
+      ...item,
+      updatedAt: message.createdAt,
+      coordination: appendCoordinationMessage(item, message),
+    } : item))
+    queueAction('chat_message', id, 'Mensaje enviado en el pedido', { messageId: message.id, type: 'text' })
+    return { ok: true, message: networkMode === 'offline' ? 'Mensaje guardado; se enviará al recuperar conexión.' : 'Mensaje enviado.' }
+  }
+
+  const sendOperationImage = (id: string, imageUrl: string): ActionResult => {
+    if (!imageUrl.trim()) return { ok: false, message: 'La fotografía no tiene una URL válida.' }
+    const operation = operations.find((item) => item.id === id && item.customerId === customerId)
+    if (!operation) return { ok: false, message: 'Pedido no encontrado o sin acceso para este cliente.' }
+    const coordination = normalizeOperationCoordination(operation)
+    if (coordination.status === 'closed') return { ok: false, message: 'La conversación terminó y permanece en modo historial.' }
+    const message = createCoordinationMessage(
+      operation.id,
+      'customer',
+      customerId,
+      profile.name,
+      'image',
+      { text: 'Fotografía adjunta', imageUrl },
+    )
+    setOperations((current) => current.map((item) => item.id === id ? {
+      ...item,
+      updatedAt: message.createdAt,
+      coordination: appendCoordinationMessage(item, message),
+    } : item))
+    queueAction('chat_message', id, 'Fotografía enviada en el pedido', { messageId: message.id, type: 'image' })
+    return { ok: true, message: 'Fotografía enviada.' }
+  }
+
+  const escalateOperationChat = (id: string): ActionResult => {
+    const operation = operations.find((item) => item.id === id && item.customerId === customerId)
+    if (!operation) return { ok: false, message: 'Pedido no encontrado o sin acceso para este cliente.' }
+    const coordination = normalizeOperationCoordination(operation)
+    if (coordination.status === 'closed') return { ok: false, message: 'La conversación ya está cerrada.' }
+    if (coordination.escalated) return { ok: true, message: 'Control ya fue solicitado para esta conversación.' }
+    const updated = escalateCoordination(operation, profile.name)
+    setOperations((current) => current.map((item) => item.id === id ? {
+      ...item,
+      updatedAt: updated.escalatedAt ?? item.updatedAt,
+      coordination: updated,
+    } : item))
+    queueAction('chat_escalation', id, 'Conversación escalada a Control', { actor: 'customer' })
+    return { ok: true, message: 'Control fue solicitado. La conversación quedó marcada para revisión.' }
+  }
+
   const startOrder = (): ActionResult => {
     if (adminMaintenance) return { ok: false, message: 'Mantenimiento activo: el checkout está temporalmente bloqueado.' }
     if (!cartStore || !cart.length) return { ok: false, message: 'El carrito está vacío.' }
     if (!isStoreOpen(cartStore.id)) return { ok: false, message: `${cartStore.name} cerró antes de confirmar. Conservamos tu carrito.` }
     const unavailable = cart.find((line) => !isProductAvailable(cartStore.id, line.product.id))
     if (unavailable) return { ok: false, message: `${unavailable.product.name} ya no está disponible. Retíralo para continuar.` }
+    const changedLine = cart.find((line) => {
+      const currentProduct = getStoreProduct(cartStore.id, line.product.id)
+      return !currentProduct
+        || currentProduct.status !== 'published'
+        || Math.abs(currentProduct.price - line.product.price) > 0.001
+        || currentProduct.name !== line.product.name
+    })
+    if (changedLine) return { ok: false, message: `${changedLine.product.name} cambió de precio o información. Vuelve al catálogo y agrégalo nuevamente antes de pagar.` }
     if (subtotal < cartStore.minimum) return { ok: false, message: `El mínimo de ${cartStore.name} es S/ ${cartStore.minimum.toFixed(2)}.` }
     if (selectedPayment.kind === 'wallet' && walletBalance < total) return { ok: false, message: 'Saldo insuficiente en la billetera DA.' }
 
@@ -1080,6 +1168,7 @@ export function AppProvider({ children }: PropsWithChildren) {
     const createdAt = new Date().toISOString()
     const id = createOperationId('order')
     const state = merchantStates[cartStore.id] ?? createMerchantStates()[cartStore.id]
+    const publicProfile = getStorePublicProfile(cartStore.id)
     const currentCart = cart
     const currentTotal = total
     const merchantNet = Number((subtotal * 0.85).toFixed(2))
@@ -1087,12 +1176,13 @@ export function AppProvider({ children }: PropsWithChildren) {
     const platformRevenue = Number(Math.max(0, currentTotal - merchantNet - riderPay).toFixed(2))
     const base: IntegratedOperation = {
       id, kind: 'order', category: cartStore.category, customerId, merchantId: `merchant-${cartStore.id}`, storeId: cartStore.id,
-      customerName: profile.name, merchantName: cartStore.name, pickupAddress: `${cartStore.name} · Lima Central`, dropoffAddress: address,
+      customerName: profile.name, merchantName: publicProfile.name, pickupAddress: publicProfile.address || `${publicProfile.name} · Lima Central`, dropoffAddress: address,
       items: currentCart.map((line) => ({ productId: line.product.id, name: line.product.name, quantity: line.quantity, unitPrice: line.product.price, extras: line.extras, note: line.note })),
       itemSummary: currentCart.map((line) => `${line.quantity} ${line.product.name}`).join(' · '), total: currentTotal, subtotal, deliveryFee, serviceFee, discount,
       platformRevenue, merchantNet, riderPay, payment: selectedPayment.label, ...paymentFields(), status: 'created', createdAt, updatedAt: createdAt, offerAttempts: 0,
       events: [{ id: `${id}-created`, status: 'created', label: 'Operación creada por el cliente', at: createdAt, actor: 'customer' }],
     }
+    base.coordination = ensureOperationCoordination(base)
     const operation = state.autoAccept ? appendOperationEvent(base, 'accepted', 'system', createdAt, 'Aceptado automáticamente por la configuración del comercio') : base
     setOperations((current) => [operation, ...current])
     setActiveOperationId(id)
@@ -1133,6 +1223,7 @@ export function AppProvider({ children }: PropsWithChildren) {
       status: 'created', createdAt, updatedAt: createdAt, offerAttempts: 0, shipmentDetails: details,
       events: [{ id: `${id}-created`, status: 'created', label: 'Solicitud de envío enviada a validación', at: createdAt, actor: 'customer' }],
     }
+    operation.coordination = ensureOperationCoordination(operation)
     setOperations((current) => [operation, ...current]); setActiveOperationId(id); setDeliveryKind('shipment'); setActiveShipment(shipment); setActiveOrder(null); setOrderStage(1); setCurrentMerchantStoreId(provider.id)
     if (selectedPayment.kind === 'wallet') setWalletBalance((current) => current - shipment.total)
     clearCart()
@@ -1166,7 +1257,7 @@ export function AppProvider({ children }: PropsWithChildren) {
     const store = stores.find((item) => item.id === operation.storeId)
     if (!store || !isStoreOpen(store.id)) return false
     const lines = operation.items.flatMap((item) => {
-      const product = store.products.find((productItem) => productItem.id === item.productId)
+      const product = getStoreProduct(store.id, item.productId)
       return product && isProductAvailable(store.id, product.id) ? [createCartLine(store, product, item.quantity, item.note, item.extras)] : []
     })
     if (!lines.length) return false
@@ -1209,7 +1300,9 @@ export function AppProvider({ children }: PropsWithChildren) {
   const addMerchantDemoOrder = () => {
     const store = stores.find((item) => item.id === currentMerchantStoreId) ?? stores[0]
     if (!isStoreOpen(store.id)) return
-    const product = store.products.find((item) => isProductAvailable(store.id, item.id)) ?? store.products[0]
+    const publishedProducts = getStoreProducts(store.id)
+    const product = publishedProducts.find((item) => isProductAvailable(store.id, item.id)) ?? publishedProducts[0]
+    if (!product) return
     const createdAt = new Date().toISOString(); const id = createOperationId(store.category === 'envios' ? 'shipment' : 'order')
     const totalValue = Number((product.price + (store.category === 'envios' ? 0 : store.delivery + 1.9)).toFixed(2))
     const base: IntegratedOperation = {
@@ -1320,8 +1413,8 @@ export function AppProvider({ children }: PropsWithChildren) {
     address, setAddress, addresses, addAddress, selectAddress, deleteAddress, payments, selectPayment, addDemoCard, deletePayment, selectedPayment, walletBalance, walletEntries,
     favorites, toggleFavorite, notices, unreadNotices, markNoticeRead, markAllNoticesRead, supportMessages, sendSupportMessage, settings, toggleSetting, desktopSessionActive, closeDesktopSession,
     cart, allCartLines: cartLines, cartCount, allCartCount, cartStoreCount, savedCarts, activeCartStoreId: resolvedActiveCartStoreId, selectCartStore, cartStore, cartLastSavedAt, cartPersistenceStatus, cartRecovered, subtotal, deliveryFee, serviceFee, discount, total, promo, applyPromo, addToCart, replaceCartWithProduct, updateQuantity, updateCartLineQuantity, removeCartLine, clearCart, clearAllCarts,
-    orderStage, setOrderStage, deliveryKind, activeShipment, activeOrder, activeOperation, operations, ledger, operationStatusText, financeSummary, startOrder, startShipment, advanceDelivery, finishDelivery, cancelOperation, history, reorder, rateOrder,
-    currentMerchantStoreId, selectMerchantStore, merchantStates, isStoreOpen, isProductAvailable, getProductImage, merchantOpen, setMerchantOpen, merchantAutoAccept, setMerchantAutoAccept, merchantOrders, moveMerchantOrder, addMerchantDemoOrder, merchantStock, toggleMerchantStock,
+    orderStage, setOrderStage, deliveryKind, activeShipment, activeOrder, activeOperation, operations, getOperationCoordination, sendOperationText, sendOperationImage, escalateOperationChat, ledger, operationStatusText, financeSummary, startOrder, startShipment, advanceDelivery, finishDelivery, cancelOperation, history, reorder, rateOrder,
+    currentMerchantStoreId, selectMerchantStore, merchantStates, isStoreOpen, isProductAvailable, getProductImage, getStoreProducts, getStorePublicProfile, getStoreProduct, merchantOpen, setMerchantOpen, merchantAutoAccept, setMerchantAutoAccept, merchantOrders, moveMerchantOrder, addMerchantDemoOrder, merchantStock, toggleMerchantStock,
     riderOnline, setRiderOnline, riderVoiceNavigation, setRiderVoiceNavigation, riderRouteStage, advanceRiderRoute, riderOffers, activeRiderOffer, acceptRiderOffer, rejectRiderOffer, completeRiderOffer, riderToday, riderHistory,
     adminMaintenance, setAdminMaintenance, adminBlockUndeclared, setAdminBlockUndeclared, adminEnhancedVerification, setAdminEnhancedVerification, incidents, resolveIncident,
   }}>{children}</AppContext.Provider>

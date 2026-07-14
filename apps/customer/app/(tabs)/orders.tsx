@@ -25,6 +25,9 @@ export default function Orders() {
     deliveryKind,
     activeShipment,
     activeOrder,
+    activeOperation,
+    operations,
+    getOperationCoordination,
     history,
     hubConnected,
     pendingActions,
@@ -49,6 +52,11 @@ export default function Orders() {
     : ['', 'CONFIRMADO', 'PREPARANDO', 'EN CAMINO', 'LLEGANDO']
   const stageMax = isShipment ? 5 : 4
   const pendingCount = pendingActions.length
+  const otherActiveOperations = operations.filter((operation) =>
+    operation.id !== activeOperation?.id
+    && !['delivered', 'cancelled'].includes(operation.status)
+    && Boolean(getOperationCoordination(operation.id)),
+  )
 
   return <SafeAreaView style={styles.safe} edges={['top']}>
     <ScrollView contentContainerStyle={styles.content}>
@@ -105,6 +113,25 @@ export default function Orders() {
           VER SEGUIMIENTO →
         </Text>
       </Pressable>}
+
+      {otherActiveOperations.length > 0 && <>
+        <Text style={styles.section}>OTROS PEDIDOS EN CURSO</Text>
+        {otherActiveOperations.map((operation) => {
+          const coordination = getOperationCoordination(operation.id)
+          return <View key={operation.id} style={styles.liveOrder}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.liveOrderId}>{operation.id}</Text>
+              <Text style={styles.liveOrderTitle}>{operation.merchantName.toUpperCase()}</Text>
+              <Text style={styles.liveOrderCopy}>{operation.itemSummary}</Text>
+              <Text style={styles.liveOrderMeta}>{operation.status.toUpperCase()} · {coordination?.messages.length ?? 0} mensajes</Text>
+            </View>
+            <View style={styles.liveOrderActions}>
+              <Pressable onPress={() => router.push({ pathname: '/order-chat/[id]', params: { id: operation.id } } as never)} style={styles.liveOrderButton}><Text style={styles.liveOrderButtonText}>CHAT</Text></Pressable>
+              <Pressable onPress={() => router.push({ pathname: '/order/[id]', params: { id: operation.id } } as never)} style={[styles.liveOrderButton, { backgroundColor: C.mint }]}><Text style={styles.liveOrderButtonText}>ABRIR</Text></Pressable>
+            </View>
+          </View>
+        })}
+      </>}
 
       {allCartCount > 0 && <View style={styles.cart}>
         <Text style={styles.cartSmall}>{cartStoreCount > 1 ? `${cartStoreCount} CARRITOS GUARDADOS` : 'CARRITO GUARDADO'}</Text>
@@ -203,6 +230,14 @@ const styles = StyleSheet.create({
   },
   fill: { height: '100%', backgroundColor: C.mint },
   action: { marginTop: 13, color: C.white, fontSize: 9, fontWeight: '900' },
+  liveOrder: { minHeight: 116, marginBottom: 9, padding: 12, flexDirection: 'row', gap: 10, borderWidth: 2, borderColor: C.black, backgroundColor: C.white },
+  liveOrderId: { fontSize: 7, fontWeight: '900', color: C.gray },
+  liveOrderTitle: { marginTop: 5, fontSize: 16, fontWeight: '900' },
+  liveOrderCopy: { marginTop: 4, color: C.gray, fontSize: 8 },
+  liveOrderMeta: { marginTop: 7, color: C.blue, fontSize: 7, fontWeight: '900' },
+  liveOrderActions: { width: 62, gap: 6, justifyContent: 'center' },
+  liveOrderButton: { minHeight: 36, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: C.black, backgroundColor: C.yellow },
+  liveOrderButtonText: { fontSize: 6, fontWeight: '900' },
   cart: {
     marginTop: 18,
     padding: 16,

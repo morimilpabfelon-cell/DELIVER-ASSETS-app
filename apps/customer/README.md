@@ -1,101 +1,95 @@
-# DELIVER ASSETS Customer v2.6
+# DELIVER ASSETS Customer v2.8
 
-Actualización de compatibilidad visual con Business v2.3. Mantiene perfil, mensajes propios, múltiples carritos, checkout, DA Express y la identidad visual de Customer.
+Fase 2 de coordinación por pedido.
 
-## Fotografías reales de productos
+Conserva todo lo implementado hasta Customer v2.7:
 
-Customer ahora consume:
+- perfil y fotografía;
+- mensajes propios;
+- cinco universos;
+- identidad pública;
+- catálogo dinámico;
+- multi-carrito;
+- checkout;
+- seguimiento;
+- DA Express;
+- persistencia;
+- Sync Hub.
 
-```text
-merchantStates[storeId].productImages[productId]
-```
+## Chat del pedido
 
-Las imágenes publicadas desde Business aparecen en:
+Cada pedido dispone de un canal privado entre sus participantes.
 
-- catálogo del comercio;
-- detalle del producto;
-- carrito activo;
-- checkout.
+Customer puede:
 
-Si una imagen no existe, no carga o fue retirada, Customer vuelve al símbolo visual original sin bloquear la compra.
+- enviar texto;
+- adjuntar desde galería;
+- tomar una fotografía;
+- revisar mensajes del negocio;
+- revisar eventos automáticos;
+- solicitar ayuda de Control;
+- abrir la boleta;
+- consultar el historial después de finalizar.
 
-## Flujo de publicación
-
-```text
-Business selecciona una foto
-→ Business publica al Sync Hub
-→ Hub guarda el archivo y devuelve URL
-→ Business sincroniza productImages
-→ Customer descarga el estado
-→ Customer muestra la foto
-```
-
-La URL lleva una versión para evitar que Android muestre una fotografía antigua desde caché.
-
-## Inventario
-
-Customer continúa respetando el estado publicado por Business:
+Rutas:
 
 ```text
-Producto activo  → puede abrirse y comprarse
-Producto agotado → se muestra AGOTADO y queda bloqueado
-Tienda pausada   → catálogo visible, compra bloqueada
+Pedidos → pedido → Abrir chat
+Seguimiento → Chat del pedido
 ```
 
-La normalización del estado remoto conserva inventario e imágenes aunque el snapshot sea de una versión anterior.
+Los pedidos activos adicionales también aparecen en la pestaña Pedidos. Ya no se pierde el acceso al chat cuando existe más de una operación en curso.
 
-## Sync Hub compartido
+## Boleta
 
-Customer y Business usan por defecto:
+Se genera al crear el pedido.
+
+Incluye productos, cantidades, cargos, descuentos, total, método y estado.
+
+Estados visibles:
 
 ```text
-C:\DA\deliver-assets-hub\hub-state.json
-C:\DA\deliver-assets-hub\media\
+PAGO CONFIRMADO
+EFECTIVO PENDIENTE
+PAGO PENDIENTE
+PAGO FALLIDO
+REEMBOLSADO
 ```
 
-El script detecta y reemplaza un Sync Hub antiguo que no tenga soporte para imágenes.
+## Fotografías
 
-Iniciar solamente Customer:
+Las fotografías se comprimen mediante ImagePicker y se publican en Coordination Hub.
+
+Límite de publicación:
+
+```text
+4 MB
+```
+
+Al tocarlas se abren en vista completa.
+
+## Ejecución
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\start-customer.ps1
 ```
 
-Procesos:
+Activa:
 
 ```text
-Customer Metro → 8081
-Sync Hub       → 9090
+Customer → 8081
+Coordination Hub → 9090
 ```
 
-No es necesario abrir Business y Customer simultáneamente. Business puede publicar primero; después Customer utiliza el mismo estado y los mismos archivos compartidos.
+No necesitas abrir Business simultáneamente. El Hub conserva mensajes, pedidos, boletas e imágenes.
 
-## Instalación Android
-
-No se añadieron dependencias nativas respecto de Customer v2.5. Primero prueba sin recompilar:
-
-```powershell
-npm ci
-.\scripts\start-customer.ps1
-```
-
-Si el development build instalado no carga el código nuevo:
-
-```powershell
-npm run android:device
-```
-
-Package:
-
-```text
-com.deliverassets.customer
-```
-
-## Auditoría
+## QA
 
 ```powershell
 npm run qa
 ```
 
-Incluye TypeScript, ESLint, aislamiento, perfil, multi-carrito, mensajes, tamaño e integración de fotografías publicadas por Business.
+Todas las auditorías de Customer y la Fase 2 fueron aprobadas.
+
+La exportación Android adicional se inició, pero Metro excedió el tiempo disponible del entorno durante el bundling. La validación visual final corresponde al teléfono.

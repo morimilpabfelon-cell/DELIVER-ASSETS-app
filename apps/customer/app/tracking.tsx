@@ -1,9 +1,10 @@
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons'
 import { useRouter } from 'expo-router'
 import { stores } from '@/data/catalog'
 import { useApp } from '@/context/AppContext'
+import { useFeedback } from '@/components/FeedbackProvider'
 import { formatOperationDate, operationStatusToCustomerStage } from '@/data/operations'
 import { Button } from '@/components/UI'
 import { C, shadow } from '@/theme'
@@ -24,6 +25,7 @@ const shipmentStages = [
 
 export default function Tracking() {
   const router = useRouter()
+  const { showDialog, showToast } = useFeedback()
   const {
     orderStage,
     deliveryKind,
@@ -107,8 +109,8 @@ export default function Tracking() {
           <Text style={styles.riderName}>{(activeOperation?.riderName ?? riderProfile.name).toUpperCase()}</Text>
           <Text style={styles.riderMeta}>{riderProfile.subtitle}</Text>
         </View>
-        <Pressable onPress={() => Alert.alert('Llamada demo', 'En producción se usaría un número protegido.')} style={styles.round}><Ionicons name="call" size={19}/></Pressable>
-        <Pressable onPress={() => router.push('/support')} style={styles.round}><Ionicons name="chatbubble" size={19}/></Pressable>
+        <Pressable onPress={() => showToast({ title: 'Llamada protegida', message: 'La telefonía privada se conectará en una fase posterior.', tone: 'info' })} style={styles.round}><Ionicons name="call" size={19}/></Pressable>
+        <Pressable onPress={() => activeOperation ? router.push({ pathname: '/order-chat/[id]', params: { id: activeOperation.id } } as never) : router.push('/support')} style={styles.round}><Ionicons name="chatbubble" size={19}/></Pressable>
       </View>}
 
       <Text style={styles.section}>LÍNEA DE TIEMPO COMPARTIDA</Text>
@@ -135,12 +137,28 @@ export default function Tracking() {
         <Text style={styles.routeContent}>Contenido: {activeOperation?.items[0]?.note ?? activeShipment?.content}</Text>
       </View>}
 
+      {activeOperation && <View style={styles.coordinationButtons}>
+        <View style={{ flex: 1 }}><Button label="CHAT DEL PEDIDO" onPress={() => router.push({ pathname: '/order-chat/[id]', params: { id: activeOperation.id } } as never)} color="black" icon="chatbubbles-outline"/></View>
+        <View style={{ flex: 1 }}><Button label="VER BOLETA" onPress={() => router.push({ pathname: '/receipt/[id]', params: { id: activeOperation.id } } as never)} color="white" icon="receipt-outline"/></View>
+      </View>}
+
       {done
         ? <Button label="CERRAR Y GUARDAR" onPress={close} color="mint" icon="checkmark-circle"/>
         : <Button label="ACTUALIZAR ESTADO" onPress={() => void syncNow()} color="yellow" icon="refresh-outline"/>}
 
 
-      {activeOperation && !cancelled && ['created','accepted'].includes(activeOperation.status) && <Pressable onPress={() => Alert.alert('Cancelar operación', 'Esta acción registrará el motivo y devolverá el saldo de billetera cuando corresponda.', [{ text: 'Conservar', style: 'cancel' }, { text: 'Cancelar operación', style: 'destructive', onPress: () => { const result = cancelOperation(activeOperation.id, 'customer', 'Cancelado por el cliente antes de preparación'); Alert.alert(result.ok ? 'Operación cancelada' : 'No se pudo cancelar', result.message) } }])} style={styles.cancel}><Text style={styles.cancelText}>CANCELAR ANTES DE PREPARACIÓN</Text></Pressable>}
+      {activeOperation && !cancelled && ['created','accepted'].includes(activeOperation.status) && <Pressable onPress={() => showDialog({
+        title: '¿Cancelar operación?',
+        message: 'Se registrará el motivo y se devolverá el saldo de billetera cuando corresponda.',
+        tone: 'warning',
+        actions: [
+          { label: 'Conservar', tone: 'secondary' },
+          { label: 'Cancelar operación', tone: 'destructive', onPress: () => {
+            const result = cancelOperation(activeOperation.id, 'customer', 'Cancelado por el cliente antes de preparación')
+            showToast({ title: result.ok ? 'Operación cancelada' : 'No se pudo cancelar', message: result.message, tone: result.ok ? 'success' : 'warning' })
+          } },
+        ],
+      })} style={styles.cancel}><Text style={styles.cancelText}>CANCELAR ANTES DE PREPARACIÓN</Text></Pressable>}
       <Pressable onPress={() => router.push('/support')} style={styles.issue}>
         <Text style={styles.issueTitle}>¿ALGO NO VA BIEN?</Text>
         <Text style={styles.issueAction}>REPORTAR UN PROBLEMA →</Text>
@@ -158,5 +176,5 @@ const styles = StyleSheet.create({
   riderCard:{minHeight:92,marginTop:14,padding:10,flexDirection:'row',alignItems:'center',gap:9,borderWidth:2,borderColor:C.black,backgroundColor:C.white},avatar:{width:54,height:54,alignItems:'center',justifyContent:'center',borderWidth:2,borderColor:C.black,borderRadius:27,backgroundColor:C.yellow},avatarText:{fontSize:18,fontWeight:'900'},riderLabel:{fontSize:6,fontWeight:'900'},riderName:{marginTop:3,fontSize:14,fontWeight:'900'},riderMeta:{marginTop:3,color:C.gray,fontSize:7},round:{width:40,height:40,alignItems:'center',justifyContent:'center',borderWidth:2,borderColor:C.black,borderRadius:20,backgroundColor:C.mint},
   section:{marginTop:25,marginBottom:9,fontSize:17,fontWeight:'900'},timeline:{minHeight:70,padding:10,flexDirection:'row',alignItems:'center',gap:10,borderWidth:2,borderBottomWidth:0,borderColor:C.black,backgroundColor:C.white,opacity:.45},timelineDone:{opacity:1},timelineDot:{width:34,height:34,alignItems:'center',justifyContent:'center',borderWidth:2,borderColor:C.black,borderRadius:17,backgroundColor:C.white},timelineDotDone:{backgroundColor:C.black},timelineTitle:{fontSize:9,fontWeight:'900'},timelineCopy:{marginTop:4,color:C.gray,fontSize:7},timelineTime:{fontSize:6,fontWeight:'900'},
   route:{marginVertical:18,padding:14,borderWidth:2,borderColor:C.black,backgroundColor:C.mint},routeLabel:{fontSize:7,fontWeight:'900'},routeTitle:{marginTop:8,fontSize:10,fontWeight:'900'},routeArrow:{marginVertical:4,fontSize:18,fontWeight:'900'},routeContent:{marginTop:12,paddingTop:10,borderTopWidth:1,borderColor:C.black,fontSize:8},
-  cancel:{minHeight:47,marginTop:12,alignItems:'center',justifyContent:'center',borderWidth:2,borderColor:C.red,backgroundColor:C.white},cancelText:{color:C.red,fontSize:8,fontWeight:'900'},issue:{minHeight:68,marginTop:12,padding:11,borderWidth:2,borderColor:C.black,backgroundColor:C.white},issueTitle:{fontSize:8,fontWeight:'900'},issueAction:{marginTop:7,color:C.red,fontSize:8,fontWeight:'900'},disclaimer:{marginTop:12,color:C.gray,fontSize:7,textAlign:'center'},empty:{flex:1,padding:30,justifyContent:'center',gap:20,backgroundColor:C.paper},emptyTitle:{fontSize:43,lineHeight:36,fontWeight:'900'},
+  coordinationButtons:{marginVertical:12,flexDirection:'row',gap:8},cancel:{minHeight:47,marginTop:12,alignItems:'center',justifyContent:'center',borderWidth:2,borderColor:C.red,backgroundColor:C.white},cancelText:{color:C.red,fontSize:8,fontWeight:'900'},issue:{minHeight:68,marginTop:12,padding:11,borderWidth:2,borderColor:C.black,backgroundColor:C.white},issueTitle:{fontSize:8,fontWeight:'900'},issueAction:{marginTop:7,color:C.red,fontSize:8,fontWeight:'900'},disclaimer:{marginTop:12,color:C.gray,fontSize:7,textAlign:'center'},empty:{flex:1,padding:30,justifyContent:'center',gap:20,backgroundColor:C.paper},emptyTitle:{fontSize:43,lineHeight:36,fontWeight:'900'},
 })

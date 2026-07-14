@@ -1,0 +1,56 @@
+import fs from 'node:fs'
+import path from 'node:path'
+
+const root = process.cwd()
+const read = (file) => fs.readFileSync(path.join(root, file), 'utf8')
+const exists = (file) => fs.existsSync(path.join(root, file))
+const checks = []
+const check = (name, ok) => checks.push({ name, ok: Boolean(ok) })
+
+const pkg = JSON.parse(read('package.json'))
+const app = JSON.parse(read('app.json')).expo
+const coordination = read('data/coordination.ts')
+const operations = read('data/operations.ts')
+const context = read('context/AppContext.tsx')
+const conversation = read('components/OrderConversation.tsx')
+const receipt = read('components/OperationReceiptCard.tsx')
+const backend = read('services/backend.ts')
+const chatMedia = read('services/chatMedia.ts')
+const hubCore = read('dev/sync-hub/core.mjs')
+const hubServer = read('dev/sync-hub/server.mjs')
+const startScript = read(`scripts/start-${pkg.name.includes('customer') ? 'customer' : 'business'}.ps1`)
+const isCustomer = pkg.name.includes('customer')
+const expectedVersion = isCustomer ? '2.8.0' : '2.5.0'
+const expectedCode = isCustomer ? 28 : 25
+
+check('versión Fase 2 sincronizada', pkg.version === expectedVersion && app.version === expectedVersion)
+check('versionCode correcto', app.android.versionCode === expectedCode)
+check('dominio de coordinación', coordination.includes('OperationCoordination') && coordination.includes('OperationReceipt'))
+check('mensajes texto, imagen, sistema y boleta', ['text','image','system','receipt'].every((value) => coordination.includes(`'${value}'`)))
+check('boleta inmutable derivada del pedido', coordination.includes('createReceipt') && coordination.includes('receiptNumber'))
+check('fusión de mensajes por ID', coordination.includes('mergeCoordinationMessages'))
+check('chat cierra en estados terminales', coordination.includes("source.status === 'delivered'") && coordination.includes("source.status === 'cancelled'"))
+check('operación incluye coordinación', operations.includes('coordination?: OperationCoordination'))
+check('eventos generan mensajes del sistema', operations.includes('SYS-${event.id}'))
+check('merge de operación conserva coordinación', operations.includes('mergeOperationCoordination'))
+check('contexto envía texto', context.includes('sendOperationText'))
+check('contexto envía imagen', context.includes('sendOperationImage'))
+check('contexto escala a Control', context.includes('escalateOperationChat'))
+check('acceso limitado por propietario', isCustomer ? context.includes('item.customerId === customerId') : context.includes('(item.storeId ?? item.providerId) === currentMerchantStoreId'))
+check('pantalla de chat existe', exists('app/order-chat/[id].tsx'))
+check('pantalla de boleta existe', exists('app/receipt/[id].tsx'))
+check('chat admite cámara y galería', conversation.includes('launchCameraAsync') && conversation.includes('launchImageLibraryAsync'))
+check('chat tiene vista completa de imagen', conversation.includes('previewImage') && conversation.includes('<Modal'))
+check('historial queda solo lectura', conversation.includes('CONVERSACIÓN CERRADA') && conversation.includes("coordination.status === 'closed'"))
+check('boleta muestra pago', receipt.includes('paymentStateLabel') && receipt.includes('TOTAL PAGADO / POR COBRAR'))
+check('subida de fotografía limitada', chatMedia.includes('4 * 1024 * 1024') && chatMedia.includes('/v1/media/chat'))
+check('Hub fusiona mensajes concurrentes', hubCore.includes('mergeChatMessages') && hubCore.includes('mergeCoordination'))
+check('Hub publica fotografías del chat', hubServer.includes("/v1/media/chat"))
+check('Hub anuncia Fase 2', ['coordination-v2','chat-media-v1','receipt-v1'].every((value) => hubServer.includes(value)))
+check('script rechaza Hub antiguo', ['coordination-v2','chat-media-v1','receipt-v1'].every((value) => startScript.includes(value)))
+check('sin cambios nativos adicionales', ['expo-image-picker','expo-file-system'].every((name) => pkg.dependencies[name]))
+
+const failed = checks.filter((item) => !item.ok)
+for (const item of checks) console.log(`${item.ok ? 'PASS' : 'FAIL'} · ${item.name}`)
+console.log(`\n${checks.length - failed.length}/${checks.length} verificaciones de Fase 2 aprobadas.`)
+if (failed.length) process.exit(1)

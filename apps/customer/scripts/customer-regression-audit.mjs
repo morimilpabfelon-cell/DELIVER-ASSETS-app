@@ -15,8 +15,8 @@ const cartScreen = read('app/cart.tsx')
 const checks = []
 const check = (name, condition) => checks.push({ name, ok: Boolean(condition) })
 
-check('versión 2.6.0 sincronizada', pkg.version === '2.6.0' && app.version === '2.6.0')
-check('builds 26 sincronizados', app.android.versionCode === 26 && app.ios.buildNumber === '26')
+check('versión 2.8.0 sincronizada', pkg.version === '2.8.0' && app.version === '2.8.0')
+check('builds 28 sincronizados', app.android.versionCode === 28 && app.ios.buildNumber === '28')
 check('carrito usa firma exacta', cart.includes('signature: string') && cart.includes('addOrMergeCartLine'))
 check('productos diferentes se anexan', cart.includes('return [...normalizedCurrent, nextLine]'))
 check('Context usa motor de carrito', context.includes('addOrMergeCartLine(current, nextLine)'))

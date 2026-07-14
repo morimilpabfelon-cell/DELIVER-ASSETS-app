@@ -12,6 +12,8 @@ export type QueuedActionKind =
   | 'merchant_settings'
   | 'admin_policy'
   | 'incident_resolve'
+  | 'chat_message'
+  | 'chat_escalation'
 
 export type QueuedAction = {
   id: string

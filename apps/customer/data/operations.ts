@@ -1,5 +1,6 @@
 import type { CategoryKey } from '@/data/catalog'
 import type { MerchantOrder, MerchantOrderState, OrderRecord, RiderDeliveryRecord, RiderOffer } from '@/data/system'
+import { mergeCoordinationMessages, mergeOperationCoordination, normalizeOperationCoordination, type OperationCoordination } from '@/data/coordination'
 
 export type OperationKind = 'order' | 'shipment'
 export type OperationStatus =
@@ -85,6 +86,7 @@ export type IntegratedOperation = {
   shipmentDetails?: ShipmentDetails
   rated?: boolean
   events: OperationEvent[]
+  coordination?: OperationCoordination
 }
 
 export type LedgerOwner = 'customer' | 'merchant' | 'rider' | 'platform'
@@ -157,16 +159,41 @@ export function appendOperationEvent(
   customLabel?: string,
 ): IntegratedOperation {
   if (operation.status === status && !customLabel) return operation
-  return {
+  const event: OperationEvent = {
+    id: `${operation.id}-${status}-${at}-${operation.events.length}`,
+    status,
+    label: customLabel ?? eventLabel[status],
+    at,
+    actor,
+  }
+  const base: IntegratedOperation = {
     ...operation,
     status,
     updatedAt: at,
     deliveredAt: status === 'delivered' ? at : operation.deliveredAt,
     cancelledAt: status === 'cancelled' ? at : operation.cancelledAt,
-    events: [
-      ...operation.events,
-      { id: `${operation.id}-${status}-${at}-${operation.events.length}`, status, label: customLabel ?? eventLabel[status], at, actor },
-    ],
+    events: [...operation.events, event],
+  }
+  const coordination = normalizeOperationCoordination(base)
+  const systemMessage = {
+    id: `SYS-${event.id}`,
+    operationId: operation.id,
+    senderRole: 'system' as const,
+    senderId: 'deliver-assets-system',
+    senderName: 'DELIVER ASSETS',
+    type: 'system' as const,
+    text: event.label,
+    createdAt: at,
+    status: 'sent' as const,
+  }
+  return {
+    ...base,
+    coordination: {
+      ...coordination,
+      status: status === 'delivered' || status === 'cancelled' ? 'closed' : coordination.status,
+      closedAt: status === 'delivered' || status === 'cancelled' ? at : coordination.closedAt,
+      messages: mergeCoordinationMessages(coordination.messages, [systemMessage]),
+    },
   }
 }
 
@@ -202,7 +229,7 @@ export function mergeIntegratedOperation(current: IntegratedOperation, incoming:
 
   const events = mergeOperationEvents(current.events, incoming.events)
   const updatedAt = [current.updatedAt, incoming.updatedAt, events.at(-1)?.at].filter((value): value is string => Boolean(value)).sort((a, b) => operationTime(b) - operationTime(a))[0]
-  const merged: IntegratedOperation = {
+  const mergedBase: IntegratedOperation = {
     ...older,
     ...newer,
     id: current.id,
@@ -215,6 +242,10 @@ export function mergeIntegratedOperation(current: IntegratedOperation, incoming:
     riderId: incoming.riderId ?? current.riderId,
     deliveredAt: status === 'delivered' ? ([current.deliveredAt, incoming.deliveredAt, updatedAt].filter((value): value is string => Boolean(value)).sort((a, b) => operationTime(b) - operationTime(a))[0]) : current.deliveredAt ?? incoming.deliveredAt,
     cancelledAt: status === 'cancelled' ? ([current.cancelledAt, incoming.cancelledAt, updatedAt].filter((value): value is string => Boolean(value)).sort((a, b) => operationTime(b) - operationTime(a))[0]) : current.cancelledAt ?? incoming.cancelledAt,
+  }
+  const merged: IntegratedOperation = {
+    ...mergedBase,
+    coordination: mergeOperationCoordination(mergedBase, current.coordination, incoming.coordination),
   }
   if (status === 'delivered' && merged.paymentState === 'cash_due') merged.paymentState = 'captured'
   if (status === 'cancelled' && !['refunded', 'failed'].includes(merged.paymentState)) merged.paymentState = merged.paymentState === 'captured' ? 'refunded' : 'failed'

@@ -1,7 +1,7 @@
 {
   "name": "deliver-assets-customer",
   "main": "expo-router/entry",
-  "version": "2.6.0",
+  "version": "2.8.0",
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
@@ -11,7 +11,7 @@
     "lint": "expo lint",
     "android:device": "expo run:android --device --port 8081",
     "start:device": "expo start --dev-client --localhost --clear --port 8081",
-    "qa": "npm run typecheck && npm run lint && npm run qa:split && npm run qa:customer && npm run qa:cart && npm run qa:regression && npm run qa:multicart && npm run qa:feedback && npm run qa:size && npm run qa:product-media",
+    "qa": "npm run typecheck && npm run lint && npm run qa:split && npm run qa:customer && npm run qa:cart && npm run qa:regression && npm run qa:multicart && npm run qa:feedback && npm run qa:size && npm run qa:product-media && npm run qa:phase1 && npm run qa:phase2",
     "doctor": "expo-doctor",
     "qa:split": "node scripts/split-audit.mjs",
     "qa:customer": "node scripts/customer-audit.mjs",
@@ -21,7 +21,9 @@
     "qa:feedback": "node scripts/feedback-audit.mjs",
     "qa:size": "node scripts/size-audit.mjs",
     "android:release": "expo run:android --variant release --port 8081",
-    "qa:product-media": "node scripts/product-media-audit.mjs"
+    "qa:product-media": "node scripts/product-media-audit.mjs",
+    "qa:phase1": "node scripts/phase1-customer-audit.mjs",
+    "qa:phase2": "node scripts/phase2-coordination-audit.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
