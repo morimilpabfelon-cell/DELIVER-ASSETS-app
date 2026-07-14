@@ -1,0 +1,7 @@
+﻿{
+    "name":  "deliver-assets-coordination-hub",
+    "version":  "2.3.0",
+    "runtime":  "node",
+    "entry":  "server.mjs",
+    "schemaVersion":  2
+}
